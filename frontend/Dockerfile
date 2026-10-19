@@ -1,13 +1,13 @@
-FROM node:20-alpine
+FROM node:20-slim
 
 WORKDIR /app
 
-# Install dependencies first for Docker caching
-COPY package.json ./
+# Copy package manifests
+COPY package*.json ./
 
 RUN npm install
 
-# Copy application source
+# Copy application files
 COPY . ./
 
 EXPOSE 3000

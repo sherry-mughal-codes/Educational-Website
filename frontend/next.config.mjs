@@ -1,6 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  trailingSlash: true,
   // Enable polling for file changes inside Docker if needed on Windows/WSL
   webpack: (config, { dev }) => {
     if (dev) {
