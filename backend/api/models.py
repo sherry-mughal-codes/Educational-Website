@@ -1,5 +1,30 @@
+import os
+import uuid
+import re
 from django.db import models
 from django.utils.text import slugify
+from django.utils import timezone
+
+def safe_filename(name: str) -> str:
+    """Generate a clean, traversal-safe filename."""
+    base = os.path.basename(name)
+    name_only, ext = os.path.splitext(base)
+    clean_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', name_only).strip('_')
+    if not clean_name:
+        clean_name = "document"
+    return f"{clean_name}{ext.lower()}"
+
+def resource_pdf_upload_path(instance, filename):
+    """
+    Generate safe, partitioned storage path for uploaded educational PDFs.
+    Format: pdfs/<class_slug>/<subject_slug>/<uuid4>_<safe_filename>
+    """
+    class_slug = instance.class_subject.class_level.slug if instance.class_subject else 'unassigned'
+    subject_slug = instance.class_subject.subject.slug if instance.class_subject else 'general'
+    safe_name = safe_filename(filename)
+    unique_prefix = uuid.uuid4().hex[:10]
+    return os.path.join('pdfs', class_slug, subject_slug, f"{unique_prefix}_{safe_name}")
+
 
 class ClassLevel(models.Model):
     """
@@ -65,6 +90,28 @@ class ClassSubject(models.Model):
         return f"{self.class_level.name} - {self.subject.name}"
 
 
+class Chapter(models.Model):
+    """
+    Optional chapter / topic unit association for educational resources.
+    """
+    class_subject = models.ForeignKey(ClassSubject, on_delete=models.CASCADE, related_name='chapters')
+    chapter_number = models.PositiveSmallIntegerField(help_text="Unit or chapter number (e.g. 1, 2, 3)")
+    title = models.CharField(max_length=200, help_text="e.g. Kinematics, Chemical Equilibrium")
+    slug = models.SlugField(max_length=200)
+    overview = models.TextField(blank=True, help_text="Chapter summary and learning objectives")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = (('class_subject', 'chapter_number'), ('class_subject', 'slug'))
+        ordering = ['class_subject', 'chapter_number']
+        verbose_name = "Chapter"
+        verbose_name_plural = "Chapters"
+
+    def __str__(self):
+        return f"{self.class_subject} - Ch {self.chapter_number}: {self.title}"
+
+
 class Resource(models.Model):
     """
     Published educational resources (Complete Notes, Model Papers, Chapter Guides).
@@ -77,6 +124,14 @@ class Resource(models.Model):
     ]
 
     class_subject = models.ForeignKey(ClassSubject, on_delete=models.CASCADE, related_name='resources')
+    chapter = models.ForeignKey(
+        Chapter,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='resources',
+        help_text="Optional chapter association for unit-specific notes"
+    )
     title = models.CharField(max_length=255)
     slug = models.SlugField(max_length=255)
     resource_type = models.CharField(max_length=30, choices=RESOURCE_TYPES, default='complete_notes')
@@ -85,9 +140,17 @@ class Resource(models.Model):
         blank=True,
         help_text="Key learning outcomes, chapter index, and syllabus highlights"
     )
+    pdf_file = models.FileField(
+        upload_to=resource_pdf_upload_path,
+        null=True,
+        blank=True,
+        help_text="Uploaded PDF document"
+    )
     file_format = models.CharField(max_length=10, default='PDF')
     page_count = models.PositiveIntegerField(default=0, help_text="Total pages in the complete subject resource")
+    file_size_bytes = models.PositiveBigIntegerField(default=0, help_text="File size in bytes")
     is_published = models.BooleanField(default=True, db_index=True)
+    published_at = models.DateTimeField(null=True, blank=True)
     author_attribution = models.CharField(
         max_length=200,
         default="FBISE Academic Panel & Subject Specialists",
@@ -106,6 +169,11 @@ class Resource(models.Model):
 
     def __str__(self):
         return f"{self.class_subject} - {self.title}"
+
+    def save(self, *args, **kwargs):
+        if self.is_published and not self.published_at:
+            self.published_at = timezone.now()
+        super().save(*args, **kwargs)
 
     def get_meta_title(self):
         return self.meta_title or f"{self.title} | {self.class_subject.class_level.name} FBISE"

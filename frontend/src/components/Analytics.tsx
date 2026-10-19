@@ -14,7 +14,8 @@ function AnalyticsListener() {
   const searchParams = useSearchParams();
 
   useEffect(() => {
-    if (!IS_GA_ENABLED || !pathname) return;
+    // Exclude admin management routes from polluting public analytics reports
+    if (!IS_GA_ENABLED || !pathname || pathname.startsWith('/admin')) return;
 
     const queryString = searchParams?.toString();
     const url = queryString ? `${pathname}?${queryString}` : pathname;

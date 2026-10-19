@@ -146,3 +146,23 @@ CORS_ALLOWED_ORIGINS = [
     if origin.strip()
 ]
 CORS_ALLOW_CREDENTIALS = True
+
+# CSRF Trusted Origins (Frontend to Backend admin communication)
+csrf_origins_env = os.environ.get(
+    'CSRF_TRUSTED_ORIGINS',
+    'http://localhost:3001,http://127.0.0.1:3001,http://localhost:3000,http://127.0.0.1:3000'
+)
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in csrf_origins_env.split(',')
+    if origin.strip()
+]
+SESSION_COOKIE_SAMESITE = 'Lax'
+CSRF_COOKIE_SAMESITE = 'Lax'
+SESSION_COOKIE_HTTPONLY = True
+
+# Upload limits (Default: 50MB, configurable via environment variable)
+MAX_UPLOAD_SIZE_MB = int(os.environ.get('MAX_UPLOAD_SIZE_MB', '50'))
+DATA_UPLOAD_MAX_MEMORY_SIZE = MAX_UPLOAD_SIZE_MB * 1024 * 1024
+FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
+

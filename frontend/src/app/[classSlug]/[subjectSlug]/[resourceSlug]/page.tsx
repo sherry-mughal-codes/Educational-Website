@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { getResource } from '@/lib/api';
 import Breadcrumbs from '@/components/Breadcrumbs';
+import PdfViewer from '@/components/PdfViewer';
 
 interface PageProps {
   params: {
@@ -115,6 +116,15 @@ export default async function ResourceDetailPage({ params }: PageProps) {
               </div>
             </div>
           </header>
+
+          {/* Online PDF Reader Section */}
+          <PdfViewer
+            title={resource.title}
+            hasPdf={Boolean(resource.has_pdf)}
+            streamUrl={resource.pdf_stream_url}
+            fileSizeBytes={resource.file_size_bytes}
+            pageCount={resource.page_count}
+          />
 
           {/* Educational Content & Syllabus Alignment Preview */}
           <section className="resource-content-box">
