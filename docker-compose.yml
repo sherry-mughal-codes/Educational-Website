@@ -1,0 +1,83 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: fbise-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-fbise_db}
+      POSTGRES_USER: ${POSTGRES_USER:-fbise_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fbise_dev_password_change_me}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fbise_user} -d ${POSTGRES_DB:-fbise_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - fbise_net
+    # Database ports kept private to Docker network by default per security requirements.
+    # Uncomment if host database client access is required:
+    # ports:
+    #   - "${POSTGRES_HOST_PORT:-5433}:5432"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: fbise-backend
+    restart: unless-stopped
+    command: python manage.py runserver 0.0.0.0:8000
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-django-insecure-dev-key-fbise-fallback}
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-1}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,backend}
+      POSTGRES_DB: ${POSTGRES_DB:-fbise_db}
+      POSTGRES_USER: ${POSTGRES_USER:-fbise_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fbise_dev_password_change_me}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3001,http://127.0.0.1:3001,http://localhost:3000,http://127.0.0.1:3000}
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - fbise_net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: fbise-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3001}:3000"
+    environment:
+      PORT: 3000
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      INTERNAL_API_URL: ${INTERNAL_API_URL:-http://backend:8000}
+      NEXT_PUBLIC_GA_MEASUREMENT_ID: ${NEXT_PUBLIC_GA_MEASUREMENT_ID:-}
+      NEXT_PUBLIC_GA_DEBUG_MODE: ${NEXT_PUBLIC_GA_DEBUG_MODE:-false}
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      backend:
+        condition: service_started
+    networks:
+      - fbise_net
+
+volumes:
+  postgres_data:
+    name: fbise_postgres_data
+
+networks:
+  fbise_net:
+    name: fbise_network
+    driver: bridge
