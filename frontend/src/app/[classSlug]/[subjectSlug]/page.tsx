@@ -11,14 +11,18 @@ interface PageProps {
   };
 }
 
-export const revalidate = 60;
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const data = await getSubject(params.classSlug, params.subjectSlug);
   if (!data) return {};
 
-  const title = `${data.class.name} ${data.subject.name} Notes & Model Papers | FBISE`;
-  const description = `Download complete FBISE ${data.class.name} ${data.subject.name} study notes and solved model papers. Includes ${data.subject.total_chapters} chapters syllabus overview.`;
+  const hasModelPapers = data.resources?.some((r) => r.resource_type === 'model_paper');
+  const title = hasModelPapers
+    ? `${data.class.name} ${data.subject.name} Notes & Model Papers | FBISE`
+    : `${data.class.name} ${data.subject.name} Study Notes | FBISE`;
+  const description = `FBISE ${data.class.name} ${data.subject.name} curriculum notes and learning resources. Includes ${data.subject.total_chapters} chapters syllabus overview.`;
 
   return {
     title,

@@ -137,14 +137,14 @@ export async function fetchApi<T>(endpoint: string, options: RequestInit = {}): 
 // ==============================================================================
 export async function getClasses(): Promise<ClassItem[]> {
   const data = await fetchApi<{ classes: ClassItem[] }>('/api/classes/', {
-    next: { revalidate: 60 },
+    cache: 'no-store',
   });
   return data?.classes || [];
 }
 
 export async function getClass(classSlug: string): Promise<ClassItem | null> {
   return await fetchApi<ClassItem>(`/api/classes/${classSlug}/`, {
-    next: { revalidate: 60 },
+    cache: 'no-store',
   });
 }
 
@@ -155,13 +155,13 @@ export async function getSubject(classSlug: string, subjectSlug: string) {
     resources_count: number;
     resources: ResourceItem[];
   }>(`/api/classes/${classSlug}/${subjectSlug}/`, {
-    next: { revalidate: 60 },
+    cache: 'no-store',
   });
 }
 
 export async function getResource(classSlug: string, subjectSlug: string, resourceSlug: string): Promise<ResourceItem | null> {
   return await fetchApi<ResourceItem>(`/api/resources/${classSlug}/${subjectSlug}/${resourceSlug}/`, {
-    next: { revalidate: 30 },
+    cache: 'no-store',
   });
 }
 
