@@ -482,3 +482,26 @@ class PracticeAttempt(models.Model):
     def __str__(self):
         return f"Attempt Q{self.question_id} in Session {self.session_id}: {'Correct' if self.is_correct else 'Incorrect'}"
 
+
+class SitePageContent(models.Model):
+    """
+    Stores editable text content for informational pages like About and Contact.
+    """
+    PAGE_CHOICES = [
+        ('about', 'About Us Page'),
+        ('contact', 'Contact Us Page'),
+    ]
+    page_key = models.CharField(max_length=50, unique=True, choices=PAGE_CHOICES, db_index=True)
+    title = models.CharField(max_length=255)
+    subtitle = models.TextField(blank=True)
+    data = models.JSONField(default=dict, blank=True, help_text="Structured page sections and fields")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Site Page Content"
+        verbose_name_plural = "Site Page Contents"
+
+    def __str__(self):
+        return f"Content: {self.get_page_key_display()}"
+
+

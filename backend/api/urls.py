@@ -76,4 +76,9 @@ urlpatterns = [
     path('admin/practice/questions/', views.admin_practice_questions, name='admin_practice_questions'),
     path('admin/practice/questions/<int:question_id>/', views.admin_practice_question_detail, name='admin_practice_question_detail'),
     path('admin/practice/questions/bulk-import/', views.admin_practice_questions_bulk_import, name='admin_practice_questions_bulk_import'),
+
+    # Editable Static/Site Pages (About, Contact)
+    path('pages/<str:page_key>/', views.get_page_content, name='get_page_content'),
+    path('admin/pages/', views.admin_get_all_pages, name='admin_get_all_pages'),
+    path('admin/pages/<str:page_key>/', views.admin_update_page_content, name='admin_update_page_content'),
 ]

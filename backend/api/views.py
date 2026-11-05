@@ -27,7 +27,8 @@ import logging
 
 from .models import (
     ClassLevel, Subject, ClassSubject, Chapter, Resource, StudentProfile, Order, Purchase,
-    PracticeTopic, Question, QuestionOption, QuestionAcceptedAnswer, PracticeSession, PracticeAttempt
+    PracticeTopic, Question, QuestionOption, QuestionAcceptedAnswer, PracticeSession, PracticeAttempt,
+    SitePageContent
 )
 from .pdf_utils import validate_pdf_file, safe_replace_pdf
 from .email_utils import (
@@ -2894,5 +2895,148 @@ def admin_practice_questions_bulk_import(request):
         "errors": errors,
         "message": f"Successfully imported {created_count} questions."
     }, status=201)
+
+
+# ==============================================================================
+# Site Content Management (About & Contact Pages)
+# ==============================================================================
+
+DEFAULT_PAGE_CONTENTS = {
+    'about': {
+        'title': 'About FBISE Educational Platform',
+        'subtitle': 'Empowering Federal Board matriculation students with verified, concept-driven study notes and interactive practice.',
+        'data': {
+            'mission_title': 'Our Educational Mission',
+            'mission_text': 'We provide curriculum-aligned revision notes, solved model papers, and interactive chapter practice formulated strictly according to the latest Student Learning Outcomes (SLO) criteria of the Federal Board of Intermediate and Secondary Education (FBISE), Islamabad. Our aim is to make high-quality matric exam preparation accessible to every student.',
+            'curriculum_heading': 'Curriculum Coverage',
+            'curriculum_points': [
+                'Class 9 (SSC Part I): Complete chapter notes, solved textbook exercises, and SLO practice questions for Science and General subjects.',
+                'Class 10 (SSC Part II): Exam-focused revision notes, solved board model papers, and comprehensive review exercises.',
+                'Interactive Practice: Instant feedback MCQs, fill-in-the-blanks, and true/false questions for conceptual self-testing.',
+                'Offline Study Packets: High-resolution downloadable PDF revision guides for distraction-free revision on any device.'
+            ],
+            'principles_heading': 'Platform Standards',
+            'principles_points': [
+                'Strict Syllabus Alignment: All content follows National Curriculum and Federal Board benchmarks.',
+                'Free Online Reading: All published study notes are free to read directly on screen in your browser.',
+                'Authentic Solutions: Solutions and model papers are prepared and reviewed by experienced educators.'
+            ],
+            'notice_heading': 'Independent Educational Notice',
+            'notice_text': 'This platform is an independent academic preparation resource and is not officially affiliated with or endorsed by the Federal Board of Intermediate and Secondary Education (FBISE), Islamabad. Official roll number slips, admissions, and verified board results must be accessed directly via fbise.edu.pk.'
+        }
+    },
+    'contact': {
+        'title': 'Contact Educational Support',
+        'subtitle': 'Have questions about study notes, model papers, practice questions, or payment verification? Reach out to our team.',
+        'data': {
+            'email': 'support@fbise-notes.pk',
+            'phone': '+92 300 1234567',
+            'whatsapp': '+92 300 1234567',
+            'response_time': 'Within 24 business hours',
+            'location': 'Islamabad Capital Territory, Pakistan',
+            'inquiry_heading': 'Reporting an Error or Note Correction',
+            'inquiry_steps': [
+                'Specify your Class (Class 9 or Class 10) and Subject (e.g. Physics, Chemistry).',
+                'Mention the Chapter title and the specific question, formula, or definition in question.',
+                'For order or payment verification issues, include your Order ID and payment transaction reference (TID).'
+            ]
+        }
+    }
+}
+
+def get_page_content(request, page_key):
+    """Public endpoint to fetch content for About or Contact page."""
+    if page_key not in DEFAULT_PAGE_CONTENTS:
+        return JsonResponse({"error": "Page not found"}, status=404)
+
+    record = SitePageContent.objects.filter(page_key=page_key).first()
+    if not record:
+        default = DEFAULT_PAGE_CONTENTS[page_key]
+        record = SitePageContent.objects.create(
+            page_key=page_key,
+            title=default['title'],
+            subtitle=default['subtitle'],
+            data=default['data']
+        )
+
+    return JsonResponse({
+        "page_key": record.page_key,
+        "title": record.title,
+        "subtitle": record.subtitle,
+        "data": record.data,
+        "updated_at": record.updated_at.isoformat() if record.updated_at else None,
+    }, status=200)
+
+@admin_required
+def admin_get_all_pages(request):
+    """Admin endpoint to retrieve all editable site pages."""
+    pages = {}
+    for key in ('about', 'contact'):
+        record = SitePageContent.objects.filter(page_key=key).first()
+        if not record:
+            default = DEFAULT_PAGE_CONTENTS[key]
+            record = SitePageContent.objects.create(
+                page_key=key,
+                title=default['title'],
+                subtitle=default['subtitle'],
+                data=default['data']
+            )
+        pages[key] = {
+            "page_key": record.page_key,
+            "title": record.title,
+            "subtitle": record.subtitle,
+            "data": record.data,
+            "updated_at": record.updated_at.isoformat() if record.updated_at else None,
+        }
+    return JsonResponse({"pages": pages}, status=200)
+
+@csrf_exempt
+@admin_required
+def admin_update_page_content(request, page_key):
+    """Admin endpoint to update content for About or Contact page."""
+    if request.method not in ('POST', 'PUT'):
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    if page_key not in DEFAULT_PAGE_CONTENTS:
+        return JsonResponse({"error": "Invalid page key"}, status=400)
+
+    try:
+        body = json.loads(request.body)
+    except Exception:
+        body = request.POST
+
+    title = body.get('title', '').strip()
+    subtitle = body.get('subtitle', '').strip()
+    data = body.get('data', {})
+
+    if not title:
+        return JsonResponse({"error": "Page title is required"}, status=400)
+
+    record, _ = SitePageContent.objects.get_or_create(
+        page_key=page_key,
+        defaults={
+            "title": title,
+            "subtitle": subtitle,
+            "data": data,
+        }
+    )
+    record.title = title
+    record.subtitle = subtitle
+    if isinstance(data, dict):
+        record.data = data
+    record.save()
+
+    return JsonResponse({
+        "success": True,
+        "message": f"{page_key.capitalize()} page updated successfully.",
+        "page": {
+            "page_key": record.page_key,
+            "title": record.title,
+            "subtitle": record.subtitle,
+            "data": record.data,
+            "updated_at": record.updated_at.isoformat(),
+        }
+    }, status=200)
+
 
 

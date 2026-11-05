@@ -54,6 +54,12 @@ export default function AdminNav() {
             Curriculum Structure
           </Link>
           <Link
+            href="/admin/pages/"
+            className={`admin-nav-link ${pathname === '/admin/pages/' ? 'active' : ''}`}
+          >
+            Site Pages
+          </Link>
+          <Link
             href="/admin/resources/new/"
             className={`admin-nav-link ${pathname === '/admin/resources/new/' ? 'active' : ''}`}
           >

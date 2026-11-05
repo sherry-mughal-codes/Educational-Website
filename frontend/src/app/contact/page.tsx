@@ -1,5 +1,9 @@
 import type { Metadata } from 'next';
 import Breadcrumbs from '@/components/Breadcrumbs';
+import { getPageContent } from '@/lib/api';
+
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 export const metadata: Metadata = {
   title: 'Contact Academic Support & Inquiries | FBISE Platform',
@@ -9,12 +13,26 @@ export const metadata: Metadata = {
   },
 };
 
-export default function ContactPage() {
+export default async function ContactPage() {
+  const content = await getPageContent('contact');
   const breadcrumbs = [{ label: 'Contact Us' }];
 
-  // Configurable contact details with clear deployment placeholders
-  const contactEmail = process.env.NEXT_PUBLIC_CONTACT_EMAIL || 'support@fbise-notes.example.com';
-  const responseTime = 'Within 24 to 48 business hours';
+  const title = content?.title || 'Contact Educational Support';
+  const subtitle = content?.subtitle || 'Have questions regarding syllabus alignment, note corrections, or platform navigation? Reach out to our academic team.';
+  const data = content?.data || {};
+
+  const email = data.email || 'support@fbise-notes.pk';
+  const phone = data.phone || data.whatsapp || '+92 300 1234567';
+  const responseTime = data.response_time || 'Within 24 business hours';
+  const location = data.location || 'Islamabad Capital Territory, Pakistan';
+  const inquiryHeading = data.inquiry_heading || 'When reporting an error or asking about notes:';
+  const inquirySteps: string[] = Array.isArray(data.inquiry_steps) && data.inquiry_steps.length > 0
+    ? data.inquiry_steps
+    : [
+        'Specify your Class (Class 9 or Class 10) and Subject (e.g. Physics, Chemistry).',
+        'Mention the Chapter number and specific section or formula.',
+        'For payment queries, provide your Order Reference ID and transaction proof.',
+      ];
 
   return (
     <div className="container">
@@ -22,18 +40,15 @@ export default function ContactPage() {
 
       <header className="page-header">
         <span className="badge-pill">Academic Inquiries</span>
-        <h1 className="page-title">Contact Educational Support</h1>
-        <p className="page-subtitle">
-          Have questions regarding syllabus alignment, note corrections, or platform navigation?
-          We welcome feedback from students, teachers, and parents.
-        </p>
+        <h1 className="page-title">{title}</h1>
+        <p className="page-subtitle">{subtitle}</p>
       </header>
 
       <div className="grid-2">
         <div className="card">
           <h2 className="card-title">Inquiry Channels</h2>
           <p className="card-desc">
-            Please direct all academic and platform-related queries through our verified electronic communication channels:
+            Direct your academic questions, curriculum feedback, or order inquiries through our official channels:
           </p>
 
           <ul className="feature-list">
@@ -41,10 +56,20 @@ export default function ContactPage() {
               <span className="check-icon">✉</span>
               <span>
                 <strong>Academic Support Email:</strong><br />
-                <code className="metric-code">{contactEmail}</code>
-                <span className="subtext-note">(Placeholder: Configure NEXT_PUBLIC_CONTACT_EMAIL upon domain deployment)</span>
+                <a href={`mailto:${email}`} className="inline-link" style={{ fontWeight: 600 }}>
+                  {email}
+                </a>
               </span>
             </li>
+            {phone && (
+              <li className="feature-item">
+                <span className="check-icon">📞</span>
+                <span>
+                  <strong>Phone / WhatsApp:</strong><br />
+                  <span style={{ fontWeight: 600, color: '#0f172a' }}>{phone}</span>
+                </span>
+              </li>
+            )}
             <li className="feature-item">
               <span className="check-icon">⏱</span>
               <span>
@@ -56,7 +81,7 @@ export default function ContactPage() {
               <span className="check-icon">📍</span>
               <span>
                 <strong>Operating Region:</strong><br />
-                Islamabad Capital Territory, Pakistan (Catering to Federal Board nationwide and overseas affiliations)
+                {location}
               </span>
             </li>
           </ul>
@@ -65,16 +90,15 @@ export default function ContactPage() {
         <div className="card">
           <h2 className="card-title">Feedback &amp; Error Reporting</h2>
           <p className="card-desc">
-            To maintain the highest standard of academic rigor, we review all error submissions:
+            We continuously verify our notes and model papers to maintain the highest standard of academic rigor:
           </p>
 
           <div className="guidance-box">
-            <h3 className="guidance-title">When reporting an error:</h3>
+            <h3 className="guidance-title">{inquiryHeading}</h3>
             <ol className="guidance-list">
-              <li>Specify the exact Class and Subject (e.g. Class 9 Physics).</li>
-              <li>Mention the Chapter number and topic title.</li>
-              <li>Provide the specific equation, definition, or answer in question.</li>
-              <li>Cite the relevant Federal Board textbook edition if applicable.</li>
+              {inquirySteps.map((step, idx) => (
+                <li key={idx}>{step}</li>
+              ))}
             </ol>
           </div>
         </div>

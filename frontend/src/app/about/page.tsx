@@ -1,6 +1,10 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import Breadcrumbs from '@/components/Breadcrumbs';
+import { getPageContent } from '@/lib/api';
+
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 export const metadata: Metadata = {
   title: 'About FBISE Educational Platform | Mission & Curriculum',
@@ -10,8 +14,37 @@ export const metadata: Metadata = {
   },
 };
 
-export default function AboutPage() {
+export default async function AboutPage() {
+  const content = await getPageContent('about');
   const breadcrumbs = [{ label: 'About Us' }];
+
+  const title = content?.title || 'About FBISE Educational Platform';
+  const subtitle = content?.subtitle || 'Empowering Federal Board matriculation students across Pakistan with verified, concept-driven study materials.';
+  const data = content?.data || {};
+
+  const missionTitle = data.mission_title || 'Our Educational Mission';
+  const missionText = data.mission_text || 'We provide curriculum-aligned revision notes, solved model papers, and interactive chapter practice formulated strictly according to the latest Student Learning Outcomes (SLO) criteria of the Federal Board of Intermediate and Secondary Education (FBISE), Islamabad.';
+
+  const curriculumHeading = data.curriculum_heading || 'Curriculum Coverage';
+  const curriculumPoints: string[] = Array.isArray(data.curriculum_points) && data.curriculum_points.length > 0
+    ? data.curriculum_points
+    : [
+        'Class 9 (SSC Part I): Comprehensive notes for Physics, Chemistry, Mathematics, Biology, Computer Science, English, Urdu, Islamiat, and Pakistan Studies.',
+        'Class 10 (SSC Part II): Intensive board exam preparation guides, solved model papers, and review exercise solutions.',
+        'Interactive Practice: Instant feedback MCQs, fill-in-the-blanks, and true/false questions for conceptual self-testing.',
+      ];
+
+  const principlesHeading = data.principles_heading || 'Platform Standards';
+  const principlesPoints: string[] = Array.isArray(data.principles_points) && data.principles_points.length > 0
+    ? data.principles_points
+    : [
+        'Strict Syllabus Alignment: Resources follow National Curriculum and Federal Board guidelines.',
+        'Free Online Reading: Notes and practice questions are accessible directly in the browser.',
+        'Independent Educational Initiative: Developed to support student self-study.',
+      ];
+
+  const noticeHeading = data.notice_heading || 'Notice of Independent Status';
+  const noticeText = data.notice_text || 'This website is an independent educational portal. It is not affiliated with, endorsed by, or operated by the Federal Board of Intermediate and Secondary Education (FBISE) Islamabad. All official inquiries regarding examination registrations, roll number slips, and verified results should be directed to the official board portal at fbise.edu.pk.';
 
   return (
     <div className="container">
@@ -19,69 +52,49 @@ export default function AboutPage() {
 
       <header className="page-header">
         <span className="badge-pill">Academic Initiative</span>
-        <h1 className="page-title">About FBISE Educational Platform</h1>
-        <p className="page-subtitle">
-          Empowering Federal Board matriculation students across Pakistan and abroad with high-quality,
-          concept-driven study materials and exam preparation guides.
-        </p>
+        <h1 className="page-title">{title}</h1>
+        <p className="page-subtitle">{subtitle}</p>
       </header>
 
       <section className="info-section">
         <div className="card">
-          <h2 className="card-title">Our Educational Mission</h2>
-          <p className="card-desc">
-            The transition from traditional rote-memorization to modern Student Learning Outcomes (SLO)
-            has transformed matriculation assessments under the Federal Board of Intermediate and
-            Secondary Education (FBISE), Islamabad. Our mission is to provide equal access to structured,
-            concept-based academic notes, detailed textbook solutions, and solved model examination papers.
-          </p>
+          <h2 className="card-title">{missionTitle}</h2>
+          <p className="card-desc">{missionText}</p>
         </div>
 
         <div className="grid-2">
           <div className="card">
-            <h2 className="card-title">Curriculum Coverage</h2>
+            <h2 className="card-title">{curriculumHeading}</h2>
             <ul className="feature-list">
-              <li className="feature-item">
-                <span className="check-icon">✓</span>
-                <span><strong>Class 9 (SSC Part I):</strong> Comprehensive notes for Physics, Chemistry, Mathematics, Biology, Computer Science, English, Urdu, Islamiat, and Pakistan Studies.</span>
-              </li>
-              <li className="feature-item">
-                <span className="check-icon">✓</span>
-                <span><strong>Class 10 (SSC Part II):</strong> Intensive board exam preparation guides, solved model papers, and review exercise solutions.</span>
-              </li>
-              <li className="feature-item">
-                <span className="check-icon">✓</span>
-                <span><strong>SLO-Based Methodology:</strong> Focus on understanding definitions, derivation principles, and practical application.</span>
-              </li>
+              {curriculumPoints.map((pt, idx) => (
+                <li key={idx} className="feature-item">
+                  <span className="check-icon">✓</span>
+                  <span>{pt}</span>
+                </li>
+              ))}
             </ul>
           </div>
 
           <div className="card">
-            <h2 className="card-title">Platform Principles</h2>
+            <h2 className="card-title">{principlesHeading}</h2>
             <ul className="feature-list">
-              <li className="feature-item">
-                <span className="check-icon">✓</span>
-                <span><strong>Complete Subject Structure:</strong> Resources are structured as complete subject revision guides for unified, distraction-free study.</span>
-              </li>
-              <li className="feature-item">
-                <span className="check-icon">✓</span>
-                <span><strong>Authenticity:</strong> All materials are cross-referenced with National Curriculum guidelines and FBISE syllabus updates.</span>
-              </li>
-              <li className="feature-item">
-                <span className="check-icon">✓</span>
-                <span><strong>Independent Educational Initiative:</strong> Developed by educators to support student self-study.</span>
-              </li>
+              {principlesPoints.map((pt, idx) => (
+                <li key={idx} className="feature-item">
+                  <span className="check-icon">✓</span>
+                  <span>{pt}</span>
+                </li>
+              ))}
             </ul>
           </div>
         </div>
 
         <div className="card">
-          <h2 className="card-title">Notice of Independent Status</h2>
+          <h2 className="card-title">{noticeHeading}</h2>
           <p className="card-desc">
-            This website is an independent educational portal. It is not affiliated with, endorsed by,
-            or operated by the Federal Board of Intermediate and Secondary Education (FBISE) Islamabad.
-            All official inquiries regarding examination registrations, roll number slips, and verified
-            results should be directed to the official board portal at <a href="https://www.fbise.edu.pk" target="_blank" rel="noopener noreferrer" className="inline-link">fbise.edu.pk</a>.
+            {noticeText}{' '}
+            <a href="https://www.fbise.edu.pk" target="_blank" rel="noopener noreferrer" className="inline-link">
+              fbise.edu.pk
+            </a>.
           </p>
           <div className="actions-row">
             <Link href="/class-9/" className="btn-primary-sm">Browse Class 9 Notes</Link>

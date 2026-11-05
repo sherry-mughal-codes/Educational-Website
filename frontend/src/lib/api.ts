@@ -1123,5 +1123,54 @@ export async function adminBulkImportQuestions(payload: {
   return json;
 }
 
+// ==============================================================================
+// Site Page Content (About & Contact Management)
+// ==============================================================================
+
+export interface SitePageContentItem {
+  page_key: string;
+  title: string;
+  subtitle: string;
+  data: Record<string, any>;
+  updated_at?: string;
+}
+
+export async function getPageContent(pageKey: 'about' | 'contact'): Promise<SitePageContentItem | null> {
+  return await fetchApi<SitePageContentItem>(`/api/pages/${pageKey}/`, {
+    cache: 'no-store',
+  });
+}
+
+export async function adminGetAllPages(): Promise<{ pages: Record<string, SitePageContentItem> } | null> {
+  const res = await fetch(`${API_BASE}/api/admin/pages/`, {
+    credentials: 'include',
+    cache: 'no-store',
+  });
+  if (!res.ok) return null;
+  return await res.json();
+}
+
+export async function adminUpdatePageContent(
+  pageKey: string,
+  payload: { title: string; subtitle: string; data: Record<string, any> }
+): Promise<{ success: boolean; message?: string; error?: string; page?: SitePageContentItem }> {
+  try {
+    const res = await fetch(`${API_BASE}/api/admin/pages/${pageKey}/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      credentials: 'include',
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      return { success: false, error: data.error || 'Failed to update page content.' };
+    }
+    return { success: true, message: data.message, page: data.page };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Network error updating page.' };
+  }
+}
+
+
 
 

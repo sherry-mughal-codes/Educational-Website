@@ -172,6 +172,9 @@ export default async function ResourceDetailPage({ params }: PageProps) {
             streamUrl={resource.pdf_stream_url}
             fileSizeBytes={resource.file_size_bytes}
             pageCount={resource.page_count}
+            classSlug={cls.slug}
+            subjectSlug={subject.slug}
+            resourceSlug={resource.slug}
           />
 
           {/* Educational Content & Syllabus Alignment Preview */}
