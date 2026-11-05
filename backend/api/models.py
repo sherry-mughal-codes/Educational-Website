@@ -302,3 +302,183 @@ class Purchase(models.Model):
 
     def __str__(self):
         return f"Purchase: {self.student.email} -> {self.resource.title} (Active: {self.is_active})"
+
+
+class PracticeTopic(models.Model):
+    """
+    Interactive learning topic / skill unit belonging to a Chapter.
+    Students practice specific skills (e.g. 'Calculating Acceleration', 'Balancing Redox Equations').
+    """
+    DIFFICULTY_CHOICES = [
+        ('beginner', 'Beginner'),
+        ('intermediate', 'Intermediate'),
+        ('advanced', 'Advanced'),
+    ]
+
+    chapter = models.ForeignKey(Chapter, on_delete=models.CASCADE, related_name='practice_topics')
+    title = models.CharField(max_length=255, help_text="e.g. Calculating Acceleration from Velocity-Time Graphs")
+    slug = models.SlugField(max_length=255)
+    description = models.TextField(blank=True, help_text="Skill overview and FBISE curriculum alignment")
+    difficulty = models.CharField(max_length=20, choices=DIFFICULTY_CHOICES, default='intermediate')
+    order = models.PositiveSmallIntegerField(default=1, help_text="Ordering sequence within chapter")
+    is_published = models.BooleanField(default=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('chapter', 'slug')
+        ordering = ['chapter', 'order', 'id']
+        verbose_name = "Practice Topic"
+        verbose_name_plural = "Practice Topics"
+
+    def __str__(self):
+        return f"{self.chapter.class_subject} - Ch {self.chapter.chapter_number} - Topic: {self.title}"
+
+    @property
+    def question_count(self):
+        return self.questions.filter(is_published=True).count()
+
+
+class Question(models.Model):
+    """
+    Educational question for chapter-based practice.
+    Supports MCQs, True/False, Fill in the blanks, and Short Answer.
+    Extensible architecture for additional future types.
+    """
+    QUESTION_TYPES = [
+        ('mcq', 'Multiple Choice (MCQ)'),
+        ('true_false', 'True / False'),
+        ('fill_blank', 'Fill in the Blank'),
+        ('short_answer', 'Short Answer'),
+    ]
+
+    DIFFICULTY_CHOICES = [
+        ('beginner', 'Beginner'),
+        ('intermediate', 'Intermediate'),
+        ('advanced', 'Advanced'),
+    ]
+
+    topic = models.ForeignKey(PracticeTopic, on_delete=models.CASCADE, related_name='questions')
+    question_type = models.CharField(max_length=30, choices=QUESTION_TYPES, default='mcq', db_index=True)
+    prompt = models.TextField(help_text="Question text or problem statement (Markdown & KaTeX supported)")
+    explanation = models.TextField(
+        blank=True,
+        help_text="Detailed educational explanation shown strictly AFTER submission"
+    )
+    points = models.PositiveSmallIntegerField(default=10, help_text="SmartScore points for mastery")
+    difficulty = models.CharField(max_length=20, choices=DIFFICULTY_CHOICES, default='intermediate')
+    order = models.PositiveSmallIntegerField(default=1, help_text="Sequence within topic")
+    is_published = models.BooleanField(default=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['topic', 'order', 'id']
+        verbose_name = "Question"
+        verbose_name_plural = "Questions"
+
+    def __str__(self):
+        return f"[{self.get_question_type_display()}] {self.topic.title} - Q{self.order}: {self.prompt[:60]}..."
+
+
+class QuestionOption(models.Model):
+    """
+    Option choices for Multiple Choice and True/False questions.
+    """
+    question = models.ForeignKey(Question, on_delete=models.CASCADE, related_name='options')
+    option_text = models.CharField(max_length=500, help_text="Option label or answer statement")
+    is_correct = models.BooleanField(default=False, help_text="Whether this option is the correct answer")
+    order = models.PositiveSmallIntegerField(default=1)
+
+    class Meta:
+        ordering = ['order', 'id']
+        verbose_name = "Question Option"
+        verbose_name_plural = "Question Options"
+
+    def __str__(self):
+        return f"Opt {self.order} ({'Correct' if self.is_correct else 'Wrong'}): {self.option_text[:50]}"
+
+
+class QuestionAcceptedAnswer(models.Model):
+    """
+    Acceptable answer variants for Fill-in-the-blank and Short Answer questions.
+    Allows students to get credit for equivalent formulations (e.g. '9.8', '9.8 m/s^2').
+    """
+    question = models.ForeignKey(Question, on_delete=models.CASCADE, related_name='accepted_answers')
+    accepted_text = models.CharField(max_length=500, help_text="Normalized acceptable answer string")
+    is_case_sensitive = models.BooleanField(default=False)
+
+    class Meta:
+        verbose_name = "Question Accepted Answer"
+        verbose_name_plural = "Question Accepted Answers"
+
+    def __str__(self):
+        return f"Accepted for Q{self.question_id}: {self.accepted_text}"
+
+
+class PracticeSession(models.Model):
+    """
+    Tracks a student's or guest's interactive learning session for a specific topic.
+    """
+    session_uuid = models.UUIDField(default=uuid.uuid4, unique=True, db_index=True)
+    student = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='practice_sessions',
+        help_text="Optional student link. Null for anonymous/guest practice sessions."
+    )
+    guest_identifier = models.CharField(
+        max_length=100,
+        blank=True,
+        db_index=True,
+        help_text="Client guest ID for unregistered student persistence"
+    )
+    topic = models.ForeignKey(PracticeTopic, on_delete=models.CASCADE, related_name='sessions')
+    is_completed = models.BooleanField(default=False, db_index=True)
+    total_questions = models.PositiveSmallIntegerField(default=0)
+    correct_answers = models.PositiveSmallIntegerField(default=0)
+    score = models.PositiveIntegerField(default=0)
+    accuracy_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
+    started_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-started_at']
+        verbose_name = "Practice Session"
+        verbose_name_plural = "Practice Sessions"
+
+    def __str__(self):
+        user_str = self.student.email if self.student else f"Guest ({self.guest_identifier or 'anon'})"
+        return f"Practice {user_str} - {self.topic.title} ({self.correct_answers}/{self.total_questions})"
+
+
+class PracticeAttempt(models.Model):
+    """
+    Detailed log of a single question answered in a PracticeSession.
+    Ensures verifiable records and post-session review.
+    """
+    session = models.ForeignKey(PracticeSession, on_delete=models.CASCADE, related_name='attempts')
+    question = models.ForeignKey(Question, on_delete=models.CASCADE, related_name='attempts')
+    selected_option = models.ForeignKey(
+        QuestionOption,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='attempts'
+    )
+    text_answer = models.TextField(blank=True, default='', help_text="Submitted answer for text/blank questions")
+    is_correct = models.BooleanField(default=False, db_index=True)
+    points_awarded = models.PositiveSmallIntegerField(default=0)
+    answered_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['answered_at']
+        unique_together = ('session', 'question')
+        verbose_name = "Practice Attempt"
+        verbose_name_plural = "Practice Attempts"
+
+    def __str__(self):
+        return f"Attempt Q{self.question_id} in Session {self.session_id}: {'Correct' if self.is_correct else 'Incorrect'}"
+

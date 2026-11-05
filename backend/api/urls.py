@@ -60,4 +60,20 @@ urlpatterns = [
     path('admin/structure/', views.admin_structure_overview, name='admin_structure_overview'),
     path('admin/structure/subjects/', views.admin_create_subject, name='admin_create_subject'),
     path('admin/structure/chapters/', views.admin_create_chapter, name='admin_create_chapter'),
+
+    # Interactive Learning & Chapter Practice Endpoints
+    path('classes/<slug:class_slug>/<slug:subject_slug>/practice/', views.subject_practice_topics, name='subject_practice_topics'),
+    path('practice/topics/<slug:topic_slug>/', views.practice_topic_detail, name='practice_topic_detail'),
+    path('practice/topics/<slug:topic_slug>/start/', views.practice_session_start, name='practice_session_start'),
+    path('practice/questions/<int:question_id>/submit/', views.practice_question_submit, name='practice_question_submit'),
+    path('practice/sessions/<str:session_uuid>/finish/', views.practice_session_finish, name='practice_session_finish'),
+    path('student/practice-progress/', views.student_practice_progress, name='student_practice_progress'),
+
+    # Admin Practice Management Endpoints
+    path('admin/practice/overview/', views.admin_practice_overview, name='admin_practice_overview'),
+    path('admin/practice/topics/', views.admin_practice_topics, name='admin_practice_topics'),
+    path('admin/practice/topics/<int:topic_id>/', views.admin_practice_topic_detail, name='admin_practice_topic_detail'),
+    path('admin/practice/questions/', views.admin_practice_questions, name='admin_practice_questions'),
+    path('admin/practice/questions/<int:question_id>/', views.admin_practice_question_detail, name='admin_practice_question_detail'),
+    path('admin/practice/questions/bulk-import/', views.admin_practice_questions_bulk_import, name='admin_practice_questions_bulk_import'),
 ]

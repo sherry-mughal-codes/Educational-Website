@@ -6,7 +6,9 @@ from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
 from .models import (
     ClassLevel, Subject, ClassSubject, Chapter, Resource,
-    StudentProfile, Order, Purchase
+    StudentProfile, Order, Purchase,
+    PracticeTopic, Question, QuestionOption, QuestionAcceptedAnswer,
+    PracticeSession, PracticeAttempt
 )
 from .pdf_utils import validate_pdf_file
 from .payments.jazzcash import JazzCashGateway
@@ -813,4 +815,312 @@ class AdminOrdersAndRefundManagementTests(TestCase):
         self.client.force_login(self.student)
         dl_resp = self.client.get(f"/api/resources/class-10/english/{self.resource.slug}/download/")
         self.assertEqual(dl_resp.status_code, 403)
+
+
+class InteractivePracticeTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+
+        self.class_9 = ClassLevel.objects.create(
+            name="Class 9 (SSC Part I)",
+            grade_number=9,
+            slug="class-9",
+            is_active=True
+        )
+        self.physics = Subject.objects.create(
+            name="Physics",
+            slug="physics",
+            code="PHY"
+        )
+        self.class_subject = ClassSubject.objects.create(
+            class_level=self.class_9,
+            subject=self.physics,
+            total_chapters=9,
+            is_active=True
+        )
+        self.chapter = Chapter.objects.create(
+            class_subject=self.class_subject,
+            chapter_number=1,
+            title="Physical Quantities and Measurement",
+            slug="physical-quantities-and-measurement",
+            overview="SI Units and measurement standards"
+        )
+        self.topic = PracticeTopic.objects.create(
+            chapter=self.chapter,
+            title="SI Base Units and Standard Prefixes",
+            slug="si-base-units-and-prefixes",
+            description="Fundamental SI units and metric prefixes",
+            difficulty="beginner",
+            order=1,
+            is_published=True
+        )
+
+        # MCQ Question
+        self.q_mcq = Question.objects.create(
+            topic=self.topic,
+            question_type="mcq",
+            prompt="Which of the following is a base quantity in the International System of Units (SI)?",
+            explanation="Electric current is a fundamental base quantity, whereas velocity and force are derived.",
+            points=10,
+            difficulty="beginner",
+            order=1,
+            is_published=True
+        )
+        self.opt_mcq_correct = QuestionOption.objects.create(
+            question=self.q_mcq,
+            option_text="Electric Current",
+            is_correct=True,
+            order=1
+        )
+        self.opt_mcq_wrong = QuestionOption.objects.create(
+            question=self.q_mcq,
+            option_text="Velocity",
+            is_correct=False,
+            order=2
+        )
+
+        # Fill in the Blank Question
+        self.q_fill = Question.objects.create(
+            topic=self.topic,
+            question_type="fill_blank",
+            prompt="The standard SI unit for thermodynamic temperature is the ________.",
+            explanation="The SI base unit of thermodynamic temperature is the Kelvin (K).",
+            points=10,
+            difficulty="beginner",
+            order=2,
+            is_published=True
+        )
+        QuestionAcceptedAnswer.objects.create(
+            question=self.q_fill,
+            accepted_text="kelvin",
+            is_case_sensitive=False
+        )
+
+        # Users
+        self.student = User.objects.create_user(
+            username="practicing_student",
+            email="practicing_student@fbise.edu.pk",
+            password="StrongStudentPass2026!"
+        )
+        self.staff = User.objects.create_superuser(
+            username="practice_staff",
+            email="staff_practice@fbise.edu.pk",
+            password="AdminPass2026!"
+        )
+
+    def test_subject_practice_topics_endpoint(self):
+        resp = self.client.get('/api/classes/class-9/physics/practice/')
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data['class_level']['slug'], 'class-9')
+        self.assertEqual(data['subject']['slug'], 'physics')
+        self.assertEqual(len(data['chapters']), 1)
+        self.assertEqual(data['chapters'][0]['topics'][0]['slug'], 'si-base-units-and-prefixes')
+        self.assertEqual(data['chapters'][0]['topics'][0]['question_count'], 2)
+
+    def test_practice_session_start_security_and_sanitization(self):
+        """
+        Verify that question options and explanations NEVER leak correct answers
+        prior to student submission!
+        """
+        resp = self.client.post('/api/practice/topics/si-base-units-and-prefixes/start/', {
+            'guest_identifier': 'test_guest_token_1'
+        }, content_type='application/json')
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn('session_uuid', data)
+        self.assertEqual(len(data['questions']), 2)
+
+        q1 = data['questions'][0]
+        self.assertFalse(q1['is_answered'])
+        self.assertIsNone(q1['attempt'])
+        self.assertNotIn('explanation', q1)
+
+        # Check options
+        self.assertTrue(len(q1['options']) >= 2)
+        for opt in q1['options']:
+            self.assertNotIn('is_correct', opt)
+
+    def test_mcq_answer_evaluation_correct(self):
+        start_resp = self.client.post('/api/practice/topics/si-base-units-and-prefixes/start/', {
+            'guest_identifier': 'test_guest_token_2'
+        }, content_type='application/json')
+        sess_uuid = start_resp.json()['session_uuid']
+
+        sub_resp = self.client.post(f'/api/practice/questions/{self.q_mcq.id}/submit/', {
+            'session_uuid': sess_uuid,
+            'selected_option_id': self.opt_mcq_correct.id,
+        }, content_type='application/json')
+
+        self.assertEqual(sub_resp.status_code, 200)
+        sub_data = sub_resp.json()
+        self.assertTrue(sub_data['is_correct'])
+        self.assertEqual(sub_data['points_awarded'], 10)
+        self.assertIn('Electric current is a fundamental base quantity', sub_data['explanation'])
+        self.assertEqual(sub_data['session_summary']['score'], 10)
+        self.assertEqual(sub_data['session_summary']['correct_answers'], 1)
+
+    def test_mcq_answer_evaluation_incorrect(self):
+        start_resp = self.client.post('/api/practice/topics/si-base-units-and-prefixes/start/', {
+            'guest_identifier': 'test_guest_token_3'
+        }, content_type='application/json')
+        sess_uuid = start_resp.json()['session_uuid']
+
+        sub_resp = self.client.post(f'/api/practice/questions/{self.q_mcq.id}/submit/', {
+            'session_uuid': sess_uuid,
+            'selected_option_id': self.opt_mcq_wrong.id,
+        }, content_type='application/json')
+
+        self.assertEqual(sub_resp.status_code, 200)
+        sub_data = sub_resp.json()
+        self.assertFalse(sub_data['is_correct'])
+        self.assertEqual(sub_data['points_awarded'], 0)
+        self.assertEqual(sub_data['correct_answer_display'], 'Electric Current')
+        self.assertEqual(sub_data['session_summary']['score'], 0)
+        self.assertEqual(sub_data['session_summary']['correct_answers'], 0)
+
+    def test_fill_in_the_blank_normalization(self):
+        """
+        Verify case insensitivity and whitespace/punctuation trimming for text answers.
+        """
+        start_resp = self.client.post('/api/practice/topics/si-base-units-and-prefixes/start/', {
+            'guest_identifier': 'test_guest_token_4'
+        }, content_type='application/json')
+        sess_uuid = start_resp.json()['session_uuid']
+
+        # Submit text with surrounding spaces and uppercase letters
+        sub_resp = self.client.post(f'/api/practice/questions/{self.q_fill.id}/submit/', {
+            'session_uuid': sess_uuid,
+            'text_answer': '   KELVIN.  ',
+        }, content_type='application/json')
+
+        self.assertEqual(sub_resp.status_code, 200)
+        sub_data = sub_resp.json()
+        self.assertTrue(sub_data['is_correct'])
+        self.assertEqual(sub_data['points_awarded'], 10)
+
+    def test_prevent_duplicate_attempt_manipulation(self):
+        start_resp = self.client.post('/api/practice/topics/si-base-units-and-prefixes/start/', {
+            'guest_identifier': 'test_guest_token_5'
+        }, content_type='application/json')
+        sess_uuid = start_resp.json()['session_uuid']
+
+        # First submission
+        self.client.post(f'/api/practice/questions/{self.q_mcq.id}/submit/', {
+            'session_uuid': sess_uuid,
+            'selected_option_id': self.opt_mcq_correct.id,
+        }, content_type='application/json')
+
+        # Re-submission of same question in same session
+        sub_resp2 = self.client.post(f'/api/practice/questions/{self.q_mcq.id}/submit/', {
+            'session_uuid': sess_uuid,
+            'selected_option_id': self.opt_mcq_correct.id,
+        }, content_type='application/json')
+
+        self.assertEqual(sub_resp2.status_code, 200)
+        sub_data2 = sub_resp2.json()
+        self.assertTrue(sub_data2.get('already_attempted'))
+        # Score must NOT be doubled
+        self.assertEqual(sub_data2['session_summary']['score'], 10)
+
+    def test_session_finish_and_recap(self):
+        start_resp = self.client.post('/api/practice/topics/si-base-units-and-prefixes/start/', {
+            'guest_identifier': 'test_guest_token_6'
+        }, content_type='application/json')
+        sess_uuid = start_resp.json()['session_uuid']
+
+        # Answer 1 correct, 1 wrong
+        self.client.post(f'/api/practice/questions/{self.q_mcq.id}/submit/', {
+            'session_uuid': sess_uuid,
+            'selected_option_id': self.opt_mcq_correct.id,
+        }, content_type='application/json')
+
+        self.client.post(f'/api/practice/questions/{self.q_fill.id}/submit/', {
+            'session_uuid': sess_uuid,
+            'text_answer': 'celsius',  # Incorrect
+        }, content_type='application/json')
+
+        finish_resp = self.client.post(f'/api/practice/sessions/{sess_uuid}/finish/')
+        self.assertEqual(finish_resp.status_code, 200)
+        recap = finish_resp.json()
+        self.assertTrue(recap['is_completed'])
+        self.assertEqual(recap['correct_answers'], 1)
+        self.assertEqual(recap['total_answered'], 2)
+        self.assertEqual(float(recap['accuracy_percentage']), 50.0)
+        self.assertEqual(recap['incorrect_question_ids'], [self.q_fill.id])
+
+    def test_student_practice_progress(self):
+        self.client.force_login(self.student)
+        start_resp = self.client.post('/api/practice/topics/si-base-units-and-prefixes/start/', {}, content_type='application/json')
+        sess_uuid = start_resp.json()['session_uuid']
+
+        self.client.post(f'/api/practice/questions/{self.q_mcq.id}/submit/', {
+            'session_uuid': sess_uuid,
+            'selected_option_id': self.opt_mcq_correct.id,
+        }, content_type='application/json')
+
+        self.client.post(f'/api/practice/sessions/{sess_uuid}/finish/')
+
+        prog_resp = self.client.get('/api/student/practice-progress/')
+        self.assertEqual(prog_resp.status_code, 200)
+        prog = prog_resp.json()
+        self.assertEqual(prog['total_sessions_completed'], 1)
+        self.assertEqual(prog['total_correct'], 1)
+        self.assertEqual(prog['total_score'], 10)
+        self.assertEqual(len(prog['recent_sessions']), 1)
+
+    def test_admin_practice_crud_and_bulk_import(self):
+        # 1. Anonymous forbidden
+        forbidden_resp = self.client.post('/api/admin/practice/topics/', {
+            'chapter_id': self.chapter.id,
+            'title': 'New Unauthorized Topic'
+        }, content_type='application/json')
+        self.assertEqual(forbidden_resp.status_code, 401)
+
+        # 2. Staff user can create topic
+        self.client.force_login(self.staff)
+        topic_resp = self.client.post('/api/admin/practice/topics/', {
+            'chapter_id': self.chapter.id,
+            'title': 'Vernier Calliper & Screw Gauge Mastery',
+            'difficulty': 'intermediate',
+            'order': 2,
+            'is_published': True,
+        }, content_type='application/json')
+        self.assertEqual(topic_resp.status_code, 201)
+        topic_id = topic_resp.json()['id']
+
+        # 3. Staff user can create question with options
+        q_resp = self.client.post('/api/admin/practice/questions/', {
+            'topic_id': topic_id,
+            'question_type': 'mcq',
+            'prompt': 'What is the least count of a standard Vernier Calliper?',
+            'explanation': 'The least count is 0.1 mm.',
+            'points': 10,
+            'difficulty': 'intermediate',
+            'options': [
+                {'option_text': '0.1 mm', 'is_correct': True, 'order': 1},
+                {'option_text': '1.0 mm', 'is_correct': False, 'order': 2},
+            ]
+        }, content_type='application/json')
+        self.assertEqual(q_resp.status_code, 201)
+
+        # 4. Staff bulk import
+        bulk_resp = self.client.post('/api/admin/practice/questions/bulk-import/', {
+            'questions': [
+                {
+                    'topic_id': topic_id,
+                    'question_type': 'true_false',
+                    'prompt': 'A screw gauge has a smaller least count than a vernier calliper.',
+                    'explanation': 'A screw gauge typically has a least count of 0.01 mm.',
+                    'points': 10,
+                    'options': [
+                        {'option_text': 'True', 'is_correct': True},
+                        {'option_text': 'False', 'is_correct': False},
+                    ]
+                }
+            ]
+        }, content_type='application/json')
+        self.assertEqual(bulk_resp.status_code, 201)
+        self.assertEqual(bulk_resp.json()['created_count'], 1)
+
 

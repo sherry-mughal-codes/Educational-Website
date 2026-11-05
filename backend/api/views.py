@@ -1,13 +1,18 @@
 import os
+import re
+import string
 import json
 import uuid
+import csv
+import io
 from decimal import Decimal
 from functools import wraps
 from django.conf import settings
 from django.http import JsonResponse, Http404, FileResponse, HttpResponseRedirect
 from django.db import connection, transaction
-from django.db.models import Q, Count
+from django.db.models import Q, Count, Sum, Avg, Max
 from django.utils import timezone
+from django.utils.text import slugify
 from django.shortcuts import get_object_or_404
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
@@ -20,7 +25,10 @@ from django.views.decorators.clickjacking import xframe_options_exempt
 from django.core.exceptions import ValidationError
 import logging
 
-from .models import ClassLevel, Subject, ClassSubject, Chapter, Resource, StudentProfile, Order, Purchase
+from .models import (
+    ClassLevel, Subject, ClassSubject, Chapter, Resource, StudentProfile, Order, Purchase,
+    PracticeTopic, Question, QuestionOption, QuestionAcceptedAnswer, PracticeSession, PracticeAttempt
+)
 from .pdf_utils import validate_pdf_file, safe_replace_pdf
 from .email_utils import (
     send_registration_confirmation,
@@ -1733,4 +1741,1119 @@ def admin_order_refund(request, order_id):
         "status": "refunded",
         "message": f"Order {order.order_reference} marked as refunded and student access revoked."
     }, status=200)
+
+
+# ==============================================================================
+# INTERACTIVE LEARNING & CHAPTER PRACTICE SYSTEM
+# ==============================================================================
+
+def normalize_answer_string(text: str, case_sensitive: bool = False) -> str:
+    """
+    Normalizes short answers and fill-in-the-blank inputs for robust evaluation.
+    Trims outer whitespace, condenses inner spacing, removes common trailing/leading
+    punctuation marks, and converts to lowercase unless case_sensitive is True.
+    """
+    if not text:
+        return ""
+    text = text.strip()
+    if not case_sensitive:
+        text = text.lower()
+    text = re.sub(r'\s+', ' ', text)
+    # Strip terminal and boundary punctuation (e.g. '.', ',', '!', '?', ';', ':', '"', "'")
+    text = text.strip(string.punctuation + " ")
+    return text
+
+
+def get_question_correct_answer_display(question: Question) -> str:
+    """
+    Returns a clean, human-readable representation of the correct answer
+    for post-submission feedback and explanations.
+    """
+    if question.question_type in ('mcq', 'true_false'):
+        correct_opt = question.options.filter(is_correct=True).first()
+        return correct_opt.option_text if correct_opt else "Correct option not configured"
+    elif question.question_type in ('fill_blank', 'short_answer'):
+        accepted = list(question.accepted_answers.values_list('accepted_text', flat=True))
+        if accepted:
+            return accepted[0]
+        return "Correct answer not configured"
+    return "Not configured"
+
+
+def subject_practice_topics(request, class_slug, subject_slug):
+    """
+    Public curriculum practice directory.
+    Returns chapters and published interactive topics for a subject and class,
+    including topic question counts and student progress indicators.
+    """
+    class_level = get_object_or_404(ClassLevel, slug=class_slug, is_active=True)
+    subject = get_object_or_404(Subject, slug=subject_slug)
+    class_subject = get_object_or_404(ClassSubject, class_level=class_level, subject=subject, is_active=True)
+
+    guest_id = request.GET.get('guest_identifier', '').strip()
+
+    chapters_qs = class_subject.chapters.all().prefetch_related(
+        'practice_topics',
+        'practice_topics__questions',
+    ).order_by('chapter_number')
+
+    chapters_data = []
+    total_topics_count = 0
+
+    for ch in chapters_qs:
+        topics_qs = ch.practice_topics.filter(is_published=True).order_by('order', 'id')
+        topics_list = []
+
+        for topic in topics_qs:
+            q_count = topic.questions.filter(is_published=True).count()
+            total_topics_count += 1
+
+            # Fetch existing practice status for this student/guest
+            status = {
+                "attempted": False,
+                "is_completed": False,
+                "accuracy_percentage": 0.0,
+                "score": 0,
+                "correct_answers": 0,
+                "total_questions": q_count,
+            }
+
+            session_filter = Q(topic=topic)
+            if request.user.is_authenticated:
+                session_filter &= Q(student=request.user)
+            elif guest_id:
+                session_filter &= Q(guest_identifier=guest_id)
+            else:
+                session_filter = None
+
+            if session_filter:
+                latest_session = PracticeSession.objects.filter(session_filter).order_by('-is_completed', '-completed_at', '-started_at').first()
+                if latest_session:
+                    status = {
+                        "attempted": True,
+                        "is_completed": latest_session.is_completed,
+                        "accuracy_percentage": float(latest_session.accuracy_percentage),
+                        "score": latest_session.score,
+                        "correct_answers": latest_session.correct_answers,
+                        "total_questions": latest_session.total_questions or q_count,
+                    }
+
+            topics_list.append({
+                "id": topic.id,
+                "title": topic.title,
+                "slug": topic.slug,
+                "description": topic.description,
+                "difficulty": topic.difficulty,
+                "order": topic.order,
+                "question_count": q_count,
+                "status": status,
+            })
+
+        chapters_data.append({
+            "id": ch.id,
+            "chapter_number": ch.chapter_number,
+            "title": ch.title,
+            "slug": ch.slug,
+            "overview": ch.overview,
+            "topics": topics_list,
+        })
+
+    return JsonResponse({
+        "class_level": {
+            "name": class_level.name,
+            "slug": class_level.slug,
+            "grade_number": class_level.grade_number,
+        },
+        "subject": {
+            "name": subject.name,
+            "slug": subject.slug,
+            "code": subject.code,
+            "icon_name": subject.icon_name,
+        },
+        "chapters": chapters_data,
+        "total_topics": total_topics_count,
+    }, status=200)
+
+
+def practice_topic_detail(request, topic_slug):
+    """
+    Returns public metadata for an interactive practice topic.
+    """
+    topic = get_object_or_404(
+        PracticeTopic.objects.select_related('chapter__class_subject__class_level', 'chapter__class_subject__subject'),
+        slug=topic_slug,
+        is_published=True
+    )
+
+    q_count = topic.questions.filter(is_published=True).count()
+
+    return JsonResponse({
+        "id": topic.id,
+        "title": topic.title,
+        "slug": topic.slug,
+        "description": topic.description,
+        "difficulty": topic.difficulty,
+        "order": topic.order,
+        "question_count": q_count,
+        "chapter": {
+            "id": topic.chapter.id,
+            "chapter_number": topic.chapter.chapter_number,
+            "title": topic.chapter.title,
+            "slug": topic.chapter.slug,
+        },
+        "subject": {
+            "name": topic.chapter.class_subject.subject.name,
+            "slug": topic.chapter.class_subject.subject.slug,
+            "icon_name": topic.chapter.class_subject.subject.icon_name,
+        },
+        "class_level": {
+            "name": topic.chapter.class_subject.class_level.name,
+            "slug": topic.chapter.class_subject.class_level.slug,
+            "grade_number": topic.chapter.class_subject.class_level.grade_number,
+        }
+    }, status=200)
+
+
+@csrf_exempt
+def practice_session_start(request, topic_slug):
+    """
+    Starts or resumes an interactive practice session for a topic.
+    CRITICAL SECURITY RULE:
+    Questions returned here NEVER expose 'is_correct' or 'explanation'
+    for unattempted questions! Explanations and correct answers are
+    strictly sent only after question answer submission.
+    """
+    if request.method != 'POST':
+        return JsonResponse({"error": "POST method required"}, status=405)
+
+    topic = get_object_or_404(
+        PracticeTopic.objects.select_related('chapter__class_subject__class_level', 'chapter__class_subject__subject'),
+        slug=topic_slug,
+        is_published=True
+    )
+
+    try:
+        data = json.loads(request.body)
+    except Exception:
+        data = request.POST
+
+    guest_id = data.get('guest_identifier', '').strip()
+    force_new = data.get('force_new', False)
+    retry_ids = data.get('retry_question_ids', [])
+
+    # Check for active existing session
+    session = None
+    if not force_new and not retry_ids:
+        if request.user.is_authenticated:
+            session = PracticeSession.objects.filter(
+                student=request.user,
+                topic=topic,
+                is_completed=False
+            ).first()
+        elif guest_id:
+            session = PracticeSession.objects.filter(
+                guest_identifier=guest_id,
+                topic=topic,
+                is_completed=False
+            ).first()
+
+    if not session:
+        session = PracticeSession.objects.create(
+            student=request.user if request.user.is_authenticated else None,
+            guest_identifier=guest_id if not request.user.is_authenticated else '',
+            topic=topic,
+        )
+
+    # Fetch questions
+    q_filter = Q(topic=topic, is_published=True)
+    if retry_ids and isinstance(retry_ids, list):
+        q_filter &= Q(id__in=retry_ids)
+
+    questions_qs = Question.objects.filter(q_filter).prefetch_related(
+        'options',
+        'accepted_answers',
+    ).order_by('order', 'id')
+
+    # Update session question count
+    total_q = questions_qs.count()
+    if session.total_questions != total_q:
+        session.total_questions = total_q
+        session.save(update_fields=['total_questions'])
+
+    # Map existing attempts for this session
+    existing_attempts = {
+        att.question_id: att for att in session.attempts.all().select_related('selected_option')
+    }
+
+    sanitized_questions = []
+    for q in questions_qs:
+        attempt = existing_attempts.get(q.id)
+
+        # Options for MCQ/TrueFalse (NO is_correct field sent to client!)
+        options = []
+        if q.question_type in ('mcq', 'true_false'):
+            options = [
+                {
+                    "id": opt.id,
+                    "option_text": opt.option_text,
+                    "order": opt.order
+                }
+                for opt in q.options.all().order_by('order', 'id')
+            ]
+
+        item = {
+            "id": q.id,
+            "question_type": q.question_type,
+            "prompt": q.prompt,
+            "points": q.points,
+            "difficulty": q.difficulty,
+            "order": q.order,
+            "options": options,
+            "is_answered": attempt is not None,
+        }
+
+        # If question has already been answered, include its attempt feedback and explanation
+        if attempt:
+            item["attempt"] = {
+                "selected_option_id": attempt.selected_option_id,
+                "text_answer": attempt.text_answer,
+                "is_correct": attempt.is_correct,
+                "points_awarded": attempt.points_awarded,
+                "explanation": q.explanation,
+                "correct_answer_display": get_question_correct_answer_display(q),
+            }
+        else:
+            item["attempt"] = None
+
+        sanitized_questions.append(item)
+
+    answered_count = len(existing_attempts)
+
+    return JsonResponse({
+        "session_id": session.id,
+        "session_uuid": str(session.session_uuid),
+        "is_completed": session.is_completed,
+        "score": session.score,
+        "correct_answers": session.correct_answers,
+        "total_questions": session.total_questions,
+        "answered_count": answered_count,
+        "accuracy_percentage": float(session.accuracy_percentage),
+        "topic": {
+            "id": topic.id,
+            "title": topic.title,
+            "slug": topic.slug,
+            "difficulty": topic.difficulty,
+            "chapter_title": topic.chapter.title,
+            "chapter_number": topic.chapter.chapter_number,
+            "subject_name": topic.chapter.class_subject.subject.name,
+            "subject_slug": topic.chapter.class_subject.subject.slug,
+            "class_name": topic.chapter.class_subject.class_level.name,
+            "class_slug": topic.chapter.class_subject.class_level.slug,
+        },
+        "questions": sanitized_questions,
+    }, status=200)
+
+
+@csrf_exempt
+def practice_question_submit(request, question_id):
+    """
+    Submits an answer for an individual practice question in an active session.
+    Validates correctness on the backend and returns immediate feedback,
+    points awarded, and the comprehensive educational explanation.
+    """
+    if request.method != 'POST':
+        return JsonResponse({"error": "POST method required"}, status=405)
+
+    question = get_object_or_404(
+        Question.objects.select_related('topic'),
+        id=question_id,
+        is_published=True
+    )
+
+    try:
+        data = json.loads(request.body)
+    except Exception:
+        data = request.POST
+
+    session_uuid = data.get('session_uuid')
+    if not session_uuid:
+        return JsonResponse({"error": "session_uuid is required"}, status=400)
+
+    try:
+        session = PracticeSession.objects.get(session_uuid=session_uuid)
+    except PracticeSession.DoesNotExist:
+        return JsonResponse({"error": "Practice session not found"}, status=404)
+
+    # Validate that question belongs to the session topic
+    if question.topic_id != session.topic_id:
+        return JsonResponse({"error": "Question does not belong to this practice session topic"}, status=400)
+
+    # Check if this question was already attempted in this session
+    existing_attempt = PracticeAttempt.objects.filter(session=session, question=question).first()
+    if existing_attempt:
+        return JsonResponse({
+            "success": True,
+            "already_attempted": True,
+            "is_correct": existing_attempt.is_correct,
+            "points_awarded": existing_attempt.points_awarded,
+            "explanation": question.explanation,
+            "correct_answer_display": get_question_correct_answer_display(question),
+            "session_summary": {
+                "session_uuid": str(session.session_uuid),
+                "correct_answers": session.correct_answers,
+                "total_answered": session.attempts.count(),
+                "total_questions": session.total_questions,
+                "score": session.score,
+                "accuracy_percentage": float(session.accuracy_percentage),
+                "is_all_completed": session.attempts.count() >= session.total_questions,
+            }
+        }, status=200)
+
+    # Evaluate the answer according to question type
+    is_correct = False
+    selected_option = None
+    submitted_text = ''
+
+    if question.question_type in ('mcq', 'true_false'):
+        selected_option_id = data.get('selected_option_id')
+        if not selected_option_id:
+            return JsonResponse({"error": "selected_option_id is required for this question type"}, status=400)
+
+        selected_option = question.options.filter(id=selected_option_id).first()
+        if not selected_option:
+            return JsonResponse({"error": "Selected option does not exist for this question"}, status=400)
+
+        is_correct = bool(selected_option.is_correct)
+
+    elif question.question_type in ('fill_blank', 'short_answer'):
+        submitted_text = str(data.get('text_answer', '')).strip()
+        if not submitted_text:
+            return JsonResponse({"error": "text_answer is required for this question type"}, status=400)
+
+        accepted_answers = list(question.accepted_answers.all())
+        for acc in accepted_answers:
+            norm_sub = normalize_answer_string(submitted_text, acc.is_case_sensitive)
+            norm_acc = normalize_answer_string(acc.accepted_text, acc.is_case_sensitive)
+            if norm_sub == norm_acc:
+                is_correct = True
+                break
+
+    points_awarded = question.points if is_correct else 0
+
+    with transaction.atomic():
+        attempt = PracticeAttempt.objects.create(
+            session=session,
+            question=question,
+            selected_option=selected_option,
+            text_answer=submitted_text,
+            is_correct=is_correct,
+            points_awarded=points_awarded,
+        )
+
+        # Recalculate session statistics
+        total_attempts = session.attempts.count()
+        correct_count = session.attempts.filter(is_correct=True).count()
+        total_score = session.attempts.aggregate(total=Sum('points_awarded'))['total'] or 0
+
+        session.correct_answers = correct_count
+        session.score = total_score
+        if total_attempts > 0:
+            session.accuracy_percentage = round(Decimal((correct_count / total_attempts) * 100), 2)
+        session.save()
+
+    correct_answer_display = get_question_correct_answer_display(question)
+    is_all_completed = total_attempts >= session.total_questions
+
+    return JsonResponse({
+        "success": True,
+        "is_correct": is_correct,
+        "points_awarded": points_awarded,
+        "explanation": question.explanation,
+        "correct_answer_display": correct_answer_display,
+        "session_summary": {
+            "session_uuid": str(session.session_uuid),
+            "correct_answers": session.correct_answers,
+            "total_answered": total_attempts,
+            "total_questions": session.total_questions,
+            "score": session.score,
+            "accuracy_percentage": float(session.accuracy_percentage),
+            "is_all_completed": is_all_completed,
+        }
+    }, status=200)
+
+
+@csrf_exempt
+def practice_session_finish(request, session_uuid):
+    """
+    Finalizes a practice session and returns a comprehensive recap,
+    including individual question reviews and an incorrect questions list for retry.
+    """
+    if request.method != 'POST':
+        return JsonResponse({"error": "POST method required"}, status=405)
+
+    try:
+        session = PracticeSession.objects.select_related(
+            'topic__chapter__class_subject__class_level',
+            'topic__chapter__class_subject__subject'
+        ).get(session_uuid=session_uuid)
+    except PracticeSession.DoesNotExist:
+        return JsonResponse({"error": "Practice session not found"}, status=404)
+
+    total_attempts = session.attempts.count()
+    correct_count = session.attempts.filter(is_correct=True).count()
+    total_score = session.attempts.aggregate(total=Sum('points_awarded'))['total'] or 0
+
+    session.is_completed = True
+    session.completed_at = timezone.now()
+    session.correct_answers = correct_count
+    session.score = total_score
+    if total_attempts > 0:
+        session.accuracy_percentage = round(Decimal((correct_count / total_attempts) * 100), 2)
+    session.save()
+
+    # Build review of attempts
+    attempts_review = []
+    incorrect_question_ids = []
+
+    for att in session.attempts.all().select_related('question', 'selected_option').order_by('question__order', 'id'):
+        q = att.question
+        if not att.is_correct:
+            incorrect_question_ids.append(q.id)
+
+        student_answer = ""
+        if q.question_type in ('mcq', 'true_false'):
+            student_answer = att.selected_option.option_text if att.selected_option else "No option selected"
+        else:
+            student_answer = att.text_answer
+
+        attempts_review.append({
+            "question_id": q.id,
+            "prompt": q.prompt,
+            "question_type": q.question_type,
+            "is_correct": att.is_correct,
+            "points_awarded": att.points_awarded,
+            "student_answer": student_answer,
+            "correct_answer": get_question_correct_answer_display(q),
+            "explanation": q.explanation,
+        })
+
+    return JsonResponse({
+        "success": True,
+        "session_uuid": str(session.session_uuid),
+        "is_completed": True,
+        "completed_at": session.completed_at.isoformat(),
+        "total_questions": session.total_questions,
+        "total_answered": total_attempts,
+        "correct_answers": session.correct_answers,
+        "score": session.score,
+        "accuracy_percentage": float(session.accuracy_percentage),
+        "topic": {
+            "id": session.topic.id,
+            "title": session.topic.title,
+            "slug": session.topic.slug,
+            "chapter_title": session.topic.chapter.title,
+            "chapter_number": session.topic.chapter.chapter_number,
+            "subject_name": session.topic.chapter.class_subject.subject.name,
+            "subject_slug": session.topic.chapter.class_subject.subject.slug,
+            "class_name": session.topic.chapter.class_subject.class_level.name,
+            "class_slug": session.topic.chapter.class_subject.class_level.slug,
+        },
+        "incorrect_question_ids": incorrect_question_ids,
+        "attempts": attempts_review,
+    }, status=200)
+
+
+def student_practice_progress(request):
+    """
+    Returns student learning progress, questions attempted, overall accuracy,
+    and history of practice sessions.
+    """
+    guest_id = request.GET.get('guest_identifier', '').strip()
+
+    if request.user.is_authenticated:
+        sessions_qs = PracticeSession.objects.filter(student=request.user)
+    elif guest_id:
+        sessions_qs = PracticeSession.objects.filter(guest_identifier=guest_id)
+    else:
+        return JsonResponse({
+            "total_sessions_completed": 0,
+            "total_questions_attempted": 0,
+            "total_correct": 0,
+            "overall_accuracy": 0.0,
+            "total_score": 0,
+            "recent_sessions": [],
+        }, status=200)
+
+    completed_sessions = sessions_qs.filter(is_completed=True).select_related(
+        'topic__chapter__class_subject__class_level',
+        'topic__chapter__class_subject__subject'
+    ).order_by('-completed_at')
+
+    total_sessions_completed = completed_sessions.count()
+
+    # Aggregate overall stats across all attempts
+    all_attempts = PracticeAttempt.objects.filter(session__in=sessions_qs)
+    total_questions_attempted = all_attempts.count()
+    total_correct = all_attempts.filter(is_correct=True).count()
+    total_score = all_attempts.aggregate(total=Sum('points_awarded'))['total'] or 0
+
+    overall_accuracy = 0.0
+    if total_questions_attempted > 0:
+        overall_accuracy = round(float((total_correct / total_questions_attempted) * 100), 1)
+
+    recent_sessions_data = []
+    for s in completed_sessions[:10]:
+        recent_sessions_data.append({
+            "session_uuid": str(s.session_uuid),
+            "topic_id": s.topic.id,
+            "topic_title": s.topic.title,
+            "topic_slug": s.topic.slug,
+            "chapter_title": s.topic.chapter.title,
+            "chapter_number": s.topic.chapter.chapter_number,
+            "subject_name": s.topic.chapter.class_subject.subject.name,
+            "class_name": s.topic.chapter.class_subject.class_level.name,
+            "correct_answers": s.correct_answers,
+            "total_questions": s.total_questions,
+            "accuracy_percentage": float(s.accuracy_percentage),
+            "score": s.score,
+            "completed_at": s.completed_at.strftime('%Y-%m-%d %H:%M') if s.completed_at else '',
+        })
+
+    return JsonResponse({
+        "total_sessions_completed": total_sessions_completed,
+        "total_questions_attempted": total_questions_attempted,
+        "total_correct": total_correct,
+        "overall_accuracy": overall_accuracy,
+        "total_score": total_score,
+        "recent_sessions": recent_sessions_data,
+    }, status=200)
+
+
+# ==============================================================================
+# ADMIN PRACTICE CONTENT MANAGEMENT ENDPOINTS
+# ==============================================================================
+
+@admin_required
+def admin_practice_overview(request):
+    """
+    Overview of educational classes, subjects, and chapters with their
+    interactive practice topics and question counts for administrative management.
+    """
+    classes = ClassLevel.objects.all().order_by('grade_number')
+    result = []
+
+    for cl in classes:
+        subjects_data = []
+        for cs in cl.class_subjects.filter(is_active=True).select_related('subject').order_by('subject__name'):
+            chapters_data = []
+            for ch in cs.chapters.all().order_by('chapter_number'):
+                topics_data = []
+                for tp in ch.practice_topics.all().order_by('order', 'id'):
+                    q_count = tp.questions.count()
+                    topics_data.append({
+                        "id": tp.id,
+                        "title": tp.title,
+                        "slug": tp.slug,
+                        "difficulty": tp.difficulty,
+                        "order": tp.order,
+                        "is_published": tp.is_published,
+                        "question_count": q_count,
+                    })
+                chapters_data.append({
+                    "id": ch.id,
+                    "chapter_number": ch.chapter_number,
+                    "title": ch.title,
+                    "topics": topics_data,
+                })
+            subjects_data.append({
+                "id": cs.subject.id,
+                "name": cs.subject.name,
+                "slug": cs.subject.slug,
+                "chapters": chapters_data,
+            })
+        result.append({
+            "id": cl.id,
+            "name": cl.name,
+            "grade_number": cl.grade_number,
+            "slug": cl.slug,
+            "subjects": subjects_data,
+        })
+
+    return JsonResponse({"classes": result}, status=200)
+
+
+@csrf_exempt
+@admin_required
+def admin_practice_topics(request):
+    """
+    List or create interactive practice topics.
+    GET: Filter by chapter_id
+    POST: Create new topic
+    """
+    if request.method == 'GET':
+        chapter_id = request.GET.get('chapter_id')
+        qs = PracticeTopic.objects.all().select_related('chapter__class_subject__class_level', 'chapter__class_subject__subject')
+        if chapter_id:
+            qs = qs.filter(chapter_id=chapter_id)
+        qs = qs.order_by('chapter', 'order', 'id')
+
+        topics = []
+        for tp in qs:
+            topics.append({
+                "id": tp.id,
+                "title": tp.title,
+                "slug": tp.slug,
+                "description": tp.description,
+                "difficulty": tp.difficulty,
+                "order": tp.order,
+                "is_published": tp.is_published,
+                "question_count": tp.questions.count(),
+                "chapter_id": tp.chapter_id,
+                "chapter_title": tp.chapter.title,
+                "chapter_number": tp.chapter.chapter_number,
+                "subject_name": tp.chapter.class_subject.subject.name,
+                "class_name": tp.chapter.class_subject.class_level.name,
+            })
+        return JsonResponse({"topics": topics}, status=200)
+
+    elif request.method == 'POST':
+        try:
+            data = json.loads(request.body)
+        except Exception:
+            data = request.POST
+
+        chapter_id = data.get('chapter_id')
+        title = (data.get('title') or '').strip()
+        slug = (data.get('slug') or '').strip()
+        description = (data.get('description') or '').strip()
+        difficulty = data.get('difficulty', 'intermediate')
+        order = data.get('order', 1)
+        is_published = data.get('is_published', True)
+
+        if not chapter_id or not title:
+            return JsonResponse({"error": "chapter_id and title are required"}, status=400)
+
+        chapter = get_object_or_404(Chapter, id=chapter_id)
+
+        if not slug:
+            base_slug = slugify(title)
+            slug = base_slug
+            counter = 1
+            while PracticeTopic.objects.filter(chapter=chapter, slug=slug).exists():
+                slug = f"{base_slug}-{counter}"
+                counter += 1
+
+        topic = PracticeTopic.objects.create(
+            chapter=chapter,
+            title=title,
+            slug=slug,
+            description=description,
+            difficulty=difficulty,
+            order=int(order or 1),
+            is_published=bool(is_published),
+        )
+
+        return JsonResponse({
+            "success": True,
+            "id": topic.id,
+            "title": topic.title,
+            "slug": topic.slug,
+            "message": "Practice topic created successfully."
+        }, status=201)
+
+    return JsonResponse({"error": "Method not allowed"}, status=405)
+
+
+@csrf_exempt
+@admin_required
+def admin_practice_topic_detail(request, topic_id):
+    """
+    Get, update, or delete a practice topic.
+    """
+    topic = get_object_or_404(PracticeTopic, id=topic_id)
+
+    if request.method == 'GET':
+        return JsonResponse({
+            "id": topic.id,
+            "title": topic.title,
+            "slug": topic.slug,
+            "description": topic.description,
+            "difficulty": topic.difficulty,
+            "order": topic.order,
+            "is_published": topic.is_published,
+            "question_count": topic.questions.count(),
+            "chapter_id": topic.chapter_id,
+        }, status=200)
+
+    elif request.method in ('PUT', 'PATCH'):
+        try:
+            data = json.loads(request.body)
+        except Exception:
+            data = request.POST
+
+        if 'title' in data:
+            topic.title = data['title'].strip()
+        if 'description' in data:
+            topic.description = data['description'].strip()
+        if 'difficulty' in data:
+            topic.difficulty = data['difficulty']
+        if 'order' in data:
+            topic.order = int(data['order'])
+        if 'is_published' in data:
+            topic.is_published = bool(data['is_published'])
+        if 'slug' in data and data['slug'].strip():
+            topic.slug = slugify(data['slug'].strip())
+
+        topic.save()
+        return JsonResponse({"success": True, "message": "Practice topic updated successfully."}, status=200)
+
+    elif request.method == 'DELETE':
+        topic.delete()
+        return JsonResponse({"success": True, "message": "Practice topic deleted."}, status=200)
+
+    return JsonResponse({"error": "Method not allowed"}, status=405)
+
+
+@csrf_exempt
+@admin_required
+def admin_practice_questions(request):
+    """
+    List or create questions.
+    GET: Filter by topic_id
+    POST: Create question with options or accepted answers
+    """
+    if request.method == 'GET':
+        topic_id = request.GET.get('topic_id')
+        qs = Question.objects.all().select_related('topic').prefetch_related('options', 'accepted_answers')
+        if topic_id:
+            qs = qs.filter(topic_id=topic_id)
+        qs = qs.order_by('order', 'id')
+
+        questions = []
+        for q in qs:
+            options_data = [
+                {
+                    "id": opt.id,
+                    "option_text": opt.option_text,
+                    "is_correct": opt.is_correct,
+                    "order": opt.order
+                }
+                for opt in q.options.all().order_by('order', 'id')
+            ]
+            accepted_answers_data = [
+                {
+                    "id": acc.id,
+                    "accepted_text": acc.accepted_text,
+                    "is_case_sensitive": acc.is_case_sensitive
+                }
+                for acc in q.accepted_answers.all()
+            ]
+
+            questions.append({
+                "id": q.id,
+                "topic_id": q.topic_id,
+                "topic_title": q.topic.title,
+                "question_type": q.question_type,
+                "prompt": q.prompt,
+                "explanation": q.explanation,
+                "points": q.points,
+                "difficulty": q.difficulty,
+                "order": q.order,
+                "is_published": q.is_published,
+                "options": options_data,
+                "accepted_answers": accepted_answers_data,
+                "correct_answer_display": get_question_correct_answer_display(q),
+            })
+        return JsonResponse({"questions": questions}, status=200)
+
+    elif request.method == 'POST':
+        try:
+            data = json.loads(request.body)
+        except Exception:
+            data = request.POST
+
+        topic_id = data.get('topic_id')
+        question_type = data.get('question_type', 'mcq')
+        prompt = (data.get('prompt') or '').strip()
+        explanation = (data.get('explanation') or '').strip()
+        points = int(data.get('points', 10) or 10)
+        difficulty = data.get('difficulty', 'intermediate')
+        order = int(data.get('order', 1) or 1)
+        is_published = bool(data.get('is_published', True))
+
+        if not topic_id or not prompt:
+            return JsonResponse({"error": "topic_id and prompt are required"}, status=400)
+
+        topic = get_object_or_404(PracticeTopic, id=topic_id)
+
+        with transaction.atomic():
+            question = Question.objects.create(
+                topic=topic,
+                question_type=question_type,
+                prompt=prompt,
+                explanation=explanation,
+                points=points,
+                difficulty=difficulty,
+                order=order,
+                is_published=is_published,
+            )
+
+            # Create options if MCQ / True-False
+            if question_type in ('mcq', 'true_false'):
+                options = data.get('options', [])
+                for idx, opt_data in enumerate(options, 1):
+                    opt_text = opt_data.get('option_text', '').strip()
+                    if opt_text:
+                        QuestionOption.objects.create(
+                            question=question,
+                            option_text=opt_text,
+                            is_correct=bool(opt_data.get('is_correct', False)),
+                            order=int(opt_data.get('order', idx)),
+                        )
+
+            # Create accepted answers if fill_blank or short_answer
+            elif question_type in ('fill_blank', 'short_answer'):
+                accepted_answers = data.get('accepted_answers', [])
+                for acc_data in accepted_answers:
+                    if isinstance(acc_data, str):
+                        acc_text = acc_data.strip()
+                        case_sens = False
+                    else:
+                        acc_text = acc_data.get('accepted_text', '').strip()
+                        case_sens = bool(acc_data.get('is_case_sensitive', False))
+
+                    if acc_text:
+                        QuestionAcceptedAnswer.objects.create(
+                            question=question,
+                            accepted_text=acc_text,
+                            is_case_sensitive=case_sens,
+                        )
+
+        return JsonResponse({
+            "success": True,
+            "id": question.id,
+            "message": "Question created successfully."
+        }, status=201)
+
+    return JsonResponse({"error": "Method not allowed"}, status=405)
+
+
+@csrf_exempt
+@admin_required
+def admin_practice_question_detail(request, question_id):
+    """
+    Get, update, or delete an individual question and its options.
+    """
+    question = get_object_or_404(Question, id=question_id)
+
+    if request.method == 'GET':
+        options_data = [
+            {"id": opt.id, "option_text": opt.option_text, "is_correct": opt.is_correct, "order": opt.order}
+            for opt in question.options.all().order_by('order', 'id')
+        ]
+        accepted_data = [
+            {"id": acc.id, "accepted_text": acc.accepted_text, "is_case_sensitive": acc.is_case_sensitive}
+            for acc in question.accepted_answers.all()
+        ]
+        return JsonResponse({
+            "id": question.id,
+            "topic_id": question.topic_id,
+            "question_type": question.question_type,
+            "prompt": question.prompt,
+            "explanation": question.explanation,
+            "points": question.points,
+            "difficulty": question.difficulty,
+            "order": question.order,
+            "is_published": question.is_published,
+            "options": options_data,
+            "accepted_answers": accepted_data,
+            "correct_answer_display": get_question_correct_answer_display(question),
+        }, status=200)
+
+    elif request.method in ('PUT', 'PATCH'):
+        try:
+            data = json.loads(request.body)
+        except Exception:
+            data = request.POST
+
+        with transaction.atomic():
+            if 'prompt' in data:
+                question.prompt = data['prompt'].strip()
+            if 'explanation' in data:
+                question.explanation = data['explanation'].strip()
+            if 'question_type' in data:
+                question.question_type = data['question_type']
+            if 'points' in data:
+                question.points = int(data['points'])
+            if 'difficulty' in data:
+                question.difficulty = data['difficulty']
+            if 'order' in data:
+                question.order = int(data['order'])
+            if 'is_published' in data:
+                question.is_published = bool(data['is_published'])
+            question.save()
+
+            # Update options if provided
+            if 'options' in data and question.question_type in ('mcq', 'true_false'):
+                question.options.all().delete()
+                for idx, opt_data in enumerate(data['options'], 1):
+                    opt_text = opt_data.get('option_text', '').strip()
+                    if opt_text:
+                        QuestionOption.objects.create(
+                            question=question,
+                            option_text=opt_text,
+                            is_correct=bool(opt_data.get('is_correct', False)),
+                            order=int(opt_data.get('order', idx)),
+                        )
+
+            # Update accepted answers if provided
+            if 'accepted_answers' in data and question.question_type in ('fill_blank', 'short_answer'):
+                question.accepted_answers.all().delete()
+                for acc_data in data['accepted_answers']:
+                    if isinstance(acc_data, str):
+                        acc_text = acc_data.strip()
+                        case_sens = False
+                    else:
+                        acc_text = acc_data.get('accepted_text', '').strip()
+                        case_sens = bool(acc_data.get('is_case_sensitive', False))
+                    if acc_text:
+                        QuestionAcceptedAnswer.objects.create(
+                            question=question,
+                            accepted_text=acc_text,
+                            is_case_sensitive=case_sens,
+                        )
+
+        return JsonResponse({"success": True, "message": "Question updated successfully."}, status=200)
+
+    elif request.method == 'DELETE':
+        question.delete()
+        return JsonResponse({"success": True, "message": "Question deleted."}, status=200)
+
+    return JsonResponse({"error": "Method not allowed"}, status=405)
+
+
+@csrf_exempt
+@admin_required
+def admin_practice_questions_bulk_import(request):
+    """
+    Bulk import questions from JSON or CSV.
+    Supported fields in each question item:
+    - topic_id (int) OR topic_slug (str)
+    - question_type: 'mcq' | 'true_false' | 'fill_blank' | 'short_answer'
+    - prompt: str
+    - explanation: str
+    - points: int (default 10)
+    - difficulty: 'beginner' | 'intermediate' | 'advanced'
+    - options: list of { option_text, is_correct } OR semicolon-separated string with * for correct option
+    - accepted_answers: list of str or semicolon-separated string
+    """
+    if request.method != 'POST':
+        return JsonResponse({"error": "POST method required"}, status=405)
+
+    created_count = 0
+    errors = []
+
+    # Check for file upload (CSV) or JSON payload
+    if request.FILES.get('file'):
+        file = request.FILES['file']
+        decoded_file = file.read().decode('utf-8-sig')
+        io_string = io.StringIO(decoded_file)
+        reader = csv.DictReader(io_string)
+        items = list(reader)
+    else:
+        try:
+            data = json.loads(request.body)
+            items = data.get('questions', [])
+        except Exception:
+            return JsonResponse({"error": "Invalid JSON payload or missing questions array"}, status=400)
+
+    with transaction.atomic():
+        for idx, row in enumerate(items, 1):
+            topic_id = row.get('topic_id')
+            topic_slug = row.get('topic_slug')
+            topic = None
+
+            if topic_id:
+                topic = PracticeTopic.objects.filter(id=topic_id).first()
+            elif topic_slug:
+                topic = PracticeTopic.objects.filter(slug=topic_slug).first()
+
+            if not topic:
+                errors.append(f"Row {idx}: Practice topic not found ({topic_id or topic_slug})")
+                continue
+
+            prompt = (row.get('prompt') or '').strip()
+            if not prompt:
+                errors.append(f"Row {idx}: Question prompt is empty")
+                continue
+
+            q_type = (row.get('question_type') or 'mcq').strip().lower()
+            explanation = (row.get('explanation') or '').strip()
+            points = int(row.get('points', 10) or 10)
+            difficulty = row.get('difficulty', 'intermediate')
+
+            question = Question.objects.create(
+                topic=topic,
+                question_type=q_type,
+                prompt=prompt,
+                explanation=explanation,
+                points=points,
+                difficulty=difficulty,
+                order=topic.questions.count() + 1,
+                is_published=True,
+            )
+
+            # Parse options
+            options_raw = row.get('options')
+            if q_type in ('mcq', 'true_false'):
+                if isinstance(options_raw, list):
+                    for opt_idx, opt in enumerate(options_raw, 1):
+                        QuestionOption.objects.create(
+                            question=question,
+                            option_text=opt.get('option_text', '').strip(),
+                            is_correct=bool(opt.get('is_correct', False)),
+                            order=opt_idx
+                        )
+                elif isinstance(options_raw, str) and options_raw.strip():
+                    # Parse semicolon-separated string: "*True;False" or "Scalar;*Vector;Tensor"
+                    opts = [p.strip() for p in options_raw.split(';') if p.strip()]
+                    for opt_idx, opt_str in enumerate(opts, 1):
+                        is_corr = opt_str.startswith('*')
+                        cleaned_text = opt_str.lstrip('*').strip()
+                        QuestionOption.objects.create(
+                            question=question,
+                            option_text=cleaned_text,
+                            is_correct=is_corr,
+                            order=opt_idx
+                        )
+
+            elif q_type in ('fill_blank', 'short_answer'):
+                answers_raw = row.get('accepted_answers')
+                if isinstance(answers_raw, list):
+                    for ans in answers_raw:
+                        text = ans if isinstance(ans, str) else ans.get('accepted_text', '')
+                        if text.strip():
+                            QuestionAcceptedAnswer.objects.create(
+                                question=question,
+                                accepted_text=text.strip(),
+                                is_case_sensitive=False
+                            )
+                elif isinstance(answers_raw, str) and answers_raw.strip():
+                    for text in answers_raw.split(';'):
+                        if text.strip():
+                            QuestionAcceptedAnswer.objects.create(
+                                question=question,
+                                accepted_text=text.strip(),
+                                is_case_sensitive=False
+                            )
+
+            created_count += 1
+
+    return JsonResponse({
+        "success": True,
+        "created_count": created_count,
+        "errors": errors,
+        "message": f"Successfully imported {created_count} questions."
+    }, status=201)
+
 

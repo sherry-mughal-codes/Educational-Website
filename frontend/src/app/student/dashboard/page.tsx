@@ -3,22 +3,33 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { studentGetDashboard, studentLogout, StudentDashboardData } from '@/lib/api';
+import {
+  studentGetDashboard,
+  studentLogout,
+  StudentDashboardData,
+  getStudentPracticeProgress,
+  StudentPracticeProgress,
+} from '@/lib/api';
 
 export default function StudentDashboardPage() {
   const router = useRouter();
   const [data, setData] = useState<StudentDashboardData | null>(null);
+  const [practiceProgress, setPracticeProgress] = useState<StudentPracticeProgress | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    studentGetDashboard()
-      .then((res) => {
-        if (!res) {
+    Promise.all([
+      studentGetDashboard(),
+      getStudentPracticeProgress(),
+    ])
+      .then(([dashRes, progRes]) => {
+        if (!dashRes) {
           router.replace('/student/login/?returnUrl=/student/dashboard/');
           return;
         }
-        setData(res);
+        setData(dashRes);
+        setPracticeProgress(progRes);
       })
       .catch(() => {
         setErrorMessage('Failed to load student dashboard. Please ensure you are logged in.');
@@ -104,6 +115,139 @@ export default function StudentDashboardPage() {
           <span>{errorMessage}</span>
         </div>
       )}
+
+      {/* Interactive Practice & Chapter Mastery Section */}
+      <section className="dashboard-section" style={{
+        background: '#ffffff',
+        borderRadius: '16px',
+        border: '1px solid #e2e8f0',
+        padding: '1.75rem',
+        marginBottom: '2rem',
+        boxShadow: '0 2px 4px rgba(0, 0, 0, 0.02)',
+      }}>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '1rem',
+          marginBottom: '1.25rem',
+          borderBottom: '1px solid #f1f5f9',
+          paddingBottom: '1rem',
+        }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+              <span style={{ fontSize: '1.25rem' }}>🎯</span>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0f172a', margin: 0 }}>
+                Interactive Practice &amp; Mastery
+              </h2>
+            </div>
+            <p style={{ color: '#64748b', fontSize: '0.875rem', margin: 0 }}>
+              Your progress in FBISE chapter skills, instant feedback MCQs, and numerical exercises.
+            </p>
+          </div>
+
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <Link
+              href="/class-9/physics/practice/"
+              className="btn-outline-sm"
+              style={{ fontWeight: 600 }}
+            >
+              Practice Class 9 Skills →
+            </Link>
+            <Link
+              href="/class-10/physics/practice/"
+              className="btn-outline-sm"
+              style={{ fontWeight: 600 }}
+            >
+              Practice Class 10 Skills →
+            </Link>
+          </div>
+        </div>
+
+        {/* Practice Stats Counters */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+          gap: '1rem',
+          marginBottom: '1.5rem',
+        }}>
+          <div style={{ background: '#f8fafc', padding: '1rem', borderRadius: '12px', border: '1px solid #f1f5f9' }}>
+            <div style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: 600 }}>Skills Completed</div>
+            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#0f172a', marginTop: '0.25rem' }}>
+              {practiceProgress?.total_sessions_completed || 0}
+            </div>
+          </div>
+          <div style={{ background: '#f8fafc', padding: '1rem', borderRadius: '12px', border: '1px solid #f1f5f9' }}>
+            <div style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: 600 }}>Questions Solved</div>
+            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#0f172a', marginTop: '0.25rem' }}>
+              {practiceProgress?.total_questions_attempted || 0}
+            </div>
+          </div>
+          <div style={{ background: '#f8fafc', padding: '1rem', borderRadius: '12px', border: '1px solid #f1f5f9' }}>
+            <div style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: 600 }}>Overall Accuracy</div>
+            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#047857', marginTop: '0.25rem' }}>
+              {practiceProgress?.overall_accuracy ? `${practiceProgress.overall_accuracy}%` : '0%'}
+            </div>
+          </div>
+          <div style={{ background: '#f8fafc', padding: '1rem', borderRadius: '12px', border: '1px solid #f1f5f9' }}>
+            <div style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: 600 }}>SmartScore Points</div>
+            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#047857', marginTop: '0.25rem' }}>
+              {practiceProgress?.total_score || 0} pts
+            </div>
+          </div>
+        </div>
+
+        {/* Recent Practice Sessions */}
+        {practiceProgress && practiceProgress.recent_sessions.length > 0 && (
+          <div>
+            <div style={{ fontSize: '0.875rem', fontWeight: 700, color: '#334155', marginBottom: '0.75rem' }}>
+              Recently Practiced Skills
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              {practiceProgress.recent_sessions.slice(0, 5).map((s) => (
+                <div
+                  key={s.session_uuid}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '0.75rem 1rem',
+                    background: '#f8fafc',
+                    borderRadius: '8px',
+                    border: '1px solid #f1f5f9',
+                    fontSize: '0.875rem',
+                  }}
+                >
+                  <div>
+                    <span style={{ fontWeight: 600, color: '#0f172a' }}>{s.topic_title}</span>
+                    <span style={{ color: '#64748b', marginLeft: '0.5rem', fontSize: '0.75rem' }}>
+                      ({s.subject_name}, {s.class_name})
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                    <span style={{ fontWeight: 600, color: '#047857' }}>
+                      {Math.round(s.accuracy_percentage)}% Accuracy
+                    </span>
+                    <Link
+                      href={`/practice/${s.topic_slug}/`}
+                      style={{
+                        fontSize: '0.8125rem',
+                        fontWeight: 600,
+                        color: '#047857',
+                        textDecoration: 'none',
+                      }}
+                    >
+                      Practice Again →
+                    </Link>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
 
       {/* Main Content Sections: Purchased Notes & Downloads */}
       <section className="dashboard-section">

@@ -678,4 +678,426 @@ export async function adminRefundOrder(orderId: number | string, reason: string)
   return { success: true, message: data.message };
 }
 
+// ==============================================================================
+// Interactive Learning & Chapter Practice System API
+// ==============================================================================
+
+export interface PracticeTopicItem {
+  id: number;
+  title: string;
+  slug: string;
+  description: string;
+  difficulty: 'beginner' | 'intermediate' | 'advanced';
+  order: number;
+  question_count: number;
+  status?: {
+    attempted: boolean;
+    is_completed: boolean;
+    accuracy_percentage: number;
+    score: number;
+    correct_answers: number;
+    total_questions: number;
+  };
+  chapter_id?: number;
+  chapter_title?: string;
+  chapter_number?: number;
+  subject_name?: string;
+  class_name?: string;
+  is_published?: boolean;
+}
+
+export interface PracticeChapterItem {
+  id: number;
+  chapter_number: number;
+  title: string;
+  slug: string;
+  overview: string;
+  topics: PracticeTopicItem[];
+}
+
+export interface SubjectPracticeDirectoryResponse {
+  class_level: {
+    name: string;
+    slug: string;
+    grade_number: number;
+  };
+  subject: {
+    name: string;
+    slug: string;
+    code: string;
+    icon_name: string;
+  };
+  chapters: PracticeChapterItem[];
+  total_topics: number;
+}
+
+export interface QuestionOptionItem {
+  id: number;
+  option_text: string;
+  order: number;
+  is_correct?: boolean;
+}
+
+export interface QuestionAcceptedAnswerItem {
+  id: number;
+  accepted_text: string;
+  is_case_sensitive: boolean;
+}
+
+export interface QuestionItem {
+  id: number;
+  question_type: 'mcq' | 'true_false' | 'fill_blank' | 'short_answer';
+  prompt: string;
+  points: number;
+  difficulty: 'beginner' | 'intermediate' | 'advanced';
+  order: number;
+  options: QuestionOptionItem[];
+  is_answered: boolean;
+  attempt?: {
+    selected_option_id?: number | null;
+    text_answer?: string;
+    is_correct: boolean;
+    points_awarded: number;
+    explanation: string;
+    correct_answer_display: string;
+  } | null;
+}
+
+export interface PracticeSessionState {
+  session_id: number;
+  session_uuid: string;
+  is_completed: boolean;
+  score: number;
+  correct_answers: number;
+  total_questions: number;
+  answered_count: number;
+  accuracy_percentage: number;
+  topic: {
+    id: number;
+    title: string;
+    slug: string;
+    difficulty: string;
+    chapter_title: string;
+    chapter_number: number;
+    subject_name: string;
+    subject_slug: string;
+    class_name: string;
+    class_slug: string;
+  };
+  questions: QuestionItem[];
+}
+
+export interface QuestionSubmitResult {
+  success: boolean;
+  already_attempted?: boolean;
+  is_correct: boolean;
+  points_awarded: number;
+  explanation: string;
+  correct_answer_display: string;
+  session_summary: {
+    session_uuid: string;
+    correct_answers: number;
+    total_answered: number;
+    total_questions: number;
+    score: number;
+    accuracy_percentage: number;
+    is_all_completed: boolean;
+  };
+  error?: string;
+}
+
+export interface PracticeSessionRecap {
+  success: boolean;
+  session_uuid: string;
+  is_completed: boolean;
+  completed_at: string;
+  total_questions: number;
+  total_answered: number;
+  correct_answers: number;
+  score: number;
+  accuracy_percentage: number;
+  topic: {
+    id: number;
+    title: string;
+    slug: string;
+    chapter_title: string;
+    chapter_number: number;
+    subject_name: string;
+    subject_slug: string;
+    class_name: string;
+    class_slug: string;
+  };
+  incorrect_question_ids: number[];
+  attempts: Array<{
+    question_id: number;
+    prompt: string;
+    question_type: string;
+    is_correct: boolean;
+    points_awarded: number;
+    student_answer: string;
+    correct_answer: string;
+    explanation: string;
+  }>;
+}
+
+export interface StudentPracticeProgress {
+  total_sessions_completed: number;
+  total_questions_attempted: number;
+  total_correct: number;
+  overall_accuracy: number;
+  total_score: number;
+  recent_sessions: Array<{
+    session_uuid: string;
+    topic_id: number;
+    topic_title: string;
+    topic_slug: string;
+    chapter_title: string;
+    chapter_number: number;
+    subject_name: string;
+    class_name: string;
+    correct_answers: number;
+    total_questions: number;
+    accuracy_percentage: number;
+    score: number;
+    completed_at: string;
+  }>;
+}
+
+export function getOrCreateGuestId(): string {
+  if (typeof window === 'undefined') return '';
+  let id = localStorage.getItem('fbise_guest_id');
+  if (!id) {
+    id = 'guest_' + Math.random().toString(36).substring(2, 10) + '_' + Date.now().toString(36);
+    localStorage.setItem('fbise_guest_id', id);
+  }
+  return id;
+}
+
+export async function getSubjectPracticeDirectory(
+  classSlug: string,
+  subjectSlug: string,
+  guestIdentifier: string = ''
+): Promise<SubjectPracticeDirectoryResponse | null> {
+  const query = guestIdentifier ? `?guest_identifier=${encodeURIComponent(guestIdentifier)}` : '';
+  return await fetchApi(`/api/classes/${classSlug}/${subjectSlug}/practice/${query}`, {
+    cache: 'no-store',
+  });
+}
+
+export async function getPracticeTopicDetail(topicSlug: string): Promise<any | null> {
+  return await fetchApi(`/api/practice/topics/${topicSlug}/`, {
+    cache: 'no-store',
+  });
+}
+
+export async function startPracticeSession(
+  topicSlug: string,
+  params: {
+    guest_identifier?: string;
+    force_new?: boolean;
+    retry_question_ids?: number[];
+  } = {}
+): Promise<PracticeSessionState | null> {
+  const res = await fetch(`${API_BASE}/api/practice/topics/${topicSlug}/start/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+    credentials: 'include',
+  });
+  if (!res.ok) return null;
+  return await res.json();
+}
+
+export async function submitPracticeAnswer(
+  questionId: number,
+  params: {
+    session_uuid: string;
+    selected_option_id?: number | null;
+    text_answer?: string;
+  }
+): Promise<QuestionSubmitResult> {
+  const res = await fetch(`${API_BASE}/api/practice/questions/${questionId}/submit/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+    credentials: 'include',
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    return {
+      success: false,
+      is_correct: false,
+      points_awarded: 0,
+      explanation: '',
+      correct_answer_display: '',
+      session_summary: {
+        session_uuid: params.session_uuid,
+        correct_answers: 0,
+        total_answered: 0,
+        total_questions: 0,
+        score: 0,
+        accuracy_percentage: 0,
+        is_all_completed: false,
+      },
+      error: data.error || 'Failed to submit answer',
+    };
+  }
+  return data;
+}
+
+export async function finishPracticeSession(sessionUuid: string): Promise<PracticeSessionRecap | null> {
+  const res = await fetch(`${API_BASE}/api/practice/sessions/${sessionUuid}/finish/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+  });
+  if (!res.ok) return null;
+  return await res.json();
+}
+
+export async function getStudentPracticeProgress(guestIdentifier: string = ''): Promise<StudentPracticeProgress | null> {
+  const query = guestIdentifier ? `?guest_identifier=${encodeURIComponent(guestIdentifier)}` : '';
+  return await fetchApi(`/api/student/practice-progress/${query}`, {
+    cache: 'no-store',
+  });
+}
+
+// ------------------------------------------------------------------------------
+// Admin Practice Management APIs
+// ------------------------------------------------------------------------------
+
+export async function adminGetPracticeOverview(): Promise<{ classes: any[] } | null> {
+  return await fetchApi('/api/admin/practice/overview/', {
+    cache: 'no-store',
+  });
+}
+
+export async function adminGetPracticeTopics(chapterId?: number): Promise<{ topics: PracticeTopicItem[] } | null> {
+  const qs = chapterId ? `?chapter_id=${chapterId}` : '';
+  return await fetchApi(`/api/admin/practice/topics/${qs}`, {
+    cache: 'no-store',
+  });
+}
+
+export async function adminCreatePracticeTopic(data: {
+  chapter_id: number;
+  title: string;
+  slug?: string;
+  description?: string;
+  difficulty?: string;
+  order?: number;
+  is_published?: boolean;
+}): Promise<{ success: boolean; id?: number; error?: string }> {
+  const res = await fetch(`${API_BASE}/api/admin/practice/topics/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+    credentials: 'include',
+  });
+  const json = await res.json();
+  if (!res.ok) return { success: false, error: json.error || 'Failed to create topic' };
+  return { success: true, id: json.id };
+}
+
+export async function adminUpdatePracticeTopic(
+  topicId: number,
+  data: Partial<{
+    title: string;
+    slug: string;
+    description: string;
+    difficulty: string;
+    order: number;
+    is_published: boolean;
+  }>
+): Promise<{ success: boolean; error?: string }> {
+  const res = await fetch(`${API_BASE}/api/admin/practice/topics/${topicId}/`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+    credentials: 'include',
+  });
+  const json = await res.json();
+  if (!res.ok) return { success: false, error: json.error || 'Failed to update topic' };
+  return { success: true };
+}
+
+export async function adminDeletePracticeTopic(topicId: number): Promise<{ success: boolean; error?: string }> {
+  const res = await fetch(`${API_BASE}/api/admin/practice/topics/${topicId}/`, {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+  const json = await res.json();
+  if (!res.ok) return { success: false, error: json.error || 'Failed to delete topic' };
+  return { success: true };
+}
+
+export async function adminGetPracticeQuestions(topicId?: number): Promise<{ questions: any[] } | null> {
+  const qs = topicId ? `?topic_id=${topicId}` : '';
+  return await fetchApi(`/api/admin/practice/questions/${qs}`, {
+    cache: 'no-store',
+  });
+}
+
+export async function adminCreatePracticeQuestion(data: any): Promise<{ success: boolean; id?: number; error?: string }> {
+  const res = await fetch(`${API_BASE}/api/admin/practice/questions/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+    credentials: 'include',
+  });
+  const json = await res.json();
+  if (!res.ok) return { success: false, error: json.error || 'Failed to create question' };
+  return { success: true, id: json.id };
+}
+
+export async function adminUpdatePracticeQuestion(
+  questionId: number,
+  data: any
+): Promise<{ success: boolean; error?: string }> {
+  const res = await fetch(`${API_BASE}/api/admin/practice/questions/${questionId}/`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+    credentials: 'include',
+  });
+  const json = await res.json();
+  if (!res.ok) return { success: false, error: json.error || 'Failed to update question' };
+  return { success: true };
+}
+
+export async function adminDeletePracticeQuestion(questionId: number): Promise<{ success: boolean; error?: string }> {
+  const res = await fetch(`${API_BASE}/api/admin/practice/questions/${questionId}/`, {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+  const json = await res.json();
+  if (!res.ok) return { success: false, error: json.error || 'Failed to delete question' };
+  return { success: true };
+}
+
+export async function adminBulkImportQuestions(payload: {
+  questions?: any[];
+  formData?: FormData;
+}): Promise<{ success: boolean; created_count?: number; errors?: string[]; error?: string }> {
+  let res: Response;
+  if (payload.formData) {
+    res = await fetch(`${API_BASE}/api/admin/practice/questions/bulk-import/`, {
+      method: 'POST',
+      body: payload.formData,
+      credentials: 'include',
+    });
+  } else {
+    res = await fetch(`${API_BASE}/api/admin/practice/questions/bulk-import/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ questions: payload.questions }),
+      credentials: 'include',
+    });
+  }
+  const json = await res.json();
+  if (!res.ok) return { success: false, error: json.error || 'Bulk import failed' };
+  return json;
+}
+
+
 

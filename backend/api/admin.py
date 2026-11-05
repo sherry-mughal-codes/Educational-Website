@@ -1,5 +1,8 @@
 from django.contrib import admin
-from .models import ClassLevel, Subject, ClassSubject, Chapter, Resource, StudentProfile, Order, Purchase
+from .models import (
+    ClassLevel, Subject, ClassSubject, Chapter, Resource, StudentProfile, Order, Purchase,
+    PracticeTopic, Question, QuestionOption, QuestionAcceptedAnswer, PracticeSession, PracticeAttempt
+)
 
 @admin.register(ClassLevel)
 class ClassLevelAdmin(admin.ModelAdmin):
@@ -51,4 +54,45 @@ class PurchaseAdmin(admin.ModelAdmin):
     list_display = ('student', 'resource', 'order', 'is_active', 'access_granted_at', 'revoked_at')
     list_filter = ('is_active',)
     search_fields = ('student__email', 'student__username', 'resource__title', 'order__order_reference')
+
+
+class QuestionOptionInline(admin.TabularInline):
+    model = QuestionOption
+    extra = 4
+
+
+class QuestionAcceptedAnswerInline(admin.TabularInline):
+    model = QuestionAcceptedAnswer
+    extra = 1
+
+
+@admin.register(PracticeTopic)
+class PracticeTopicAdmin(admin.ModelAdmin):
+    list_display = ('title', 'chapter', 'difficulty', 'order', 'is_published', 'created_at')
+    list_filter = ('is_published', 'difficulty', 'chapter__class_subject__class_level', 'chapter__class_subject__subject')
+    search_fields = ('title', 'description', 'chapter__title')
+    prepopulated_fields = {'slug': ('title',)}
+
+
+@admin.register(Question)
+class QuestionAdmin(admin.ModelAdmin):
+    list_display = ('id', 'topic', 'question_type', 'difficulty', 'points', 'order', 'is_published')
+    list_filter = ('question_type', 'is_published', 'difficulty', 'topic__chapter__class_subject__class_level')
+    search_fields = ('prompt', 'explanation', 'topic__title')
+    inlines = [QuestionOptionInline, QuestionAcceptedAnswerInline]
+
+
+@admin.register(PracticeSession)
+class PracticeSessionAdmin(admin.ModelAdmin):
+    list_display = ('session_uuid', 'student', 'guest_identifier', 'topic', 'total_questions', 'correct_answers', 'score', 'accuracy_percentage', 'is_completed', 'started_at')
+    list_filter = ('is_completed', 'topic__chapter__class_subject__class_level')
+    search_fields = ('session_uuid', 'student__email', 'guest_identifier', 'topic__title')
+
+
+@admin.register(PracticeAttempt)
+class PracticeAttemptAdmin(admin.ModelAdmin):
+    list_display = ('id', 'session', 'question', 'is_correct', 'points_awarded', 'answered_at')
+    list_filter = ('is_correct',)
+    search_fields = ('session__session_uuid', 'question__prompt', 'text_answer')
+
 
