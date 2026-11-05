@@ -45,6 +45,11 @@ export default async function ClassPage({ params }: PageProps) {
     { label: cls.name, href: `/${cls.slug}/` },
   ];
 
+  // Only show subjects that have resources uploaded/published
+  const activeSubjects = cls.subjects.filter(
+    (sub) => (sub.published_resources_count || sub.resources_count || 0) > 0
+  );
+
   const getSubjectIcon = (name: string) => {
     const n = name.toLowerCase();
     if (n.includes('physics')) return '⚛️';
@@ -71,22 +76,26 @@ export default async function ClassPage({ params }: PageProps) {
 
       <section className="section-block">
         <div className="section-header">
-          <h2 className="section-title">Academic Subjects ({cls.subjects.length})</h2>
+          <h2 className="section-title">Academic Subjects ({activeSubjects.length})</h2>
           <p className="section-subtitle">
             Select a subject below to access chapter outlines, syllabus summaries, and solved model exercises.
           </p>
         </div>
 
-        {cls.subjects.length === 0 ? (
-          <div className="card text-center" style={{ padding: '3rem 2rem' }}>
-            <p className="card-title" style={{ marginBottom: '0.5rem' }}>No subjects registered yet</p>
-            <p className="card-desc">
-              Curriculum data for this class level is currently being populated.
+        {activeSubjects.length === 0 ? (
+          <div className="card text-center" style={{ padding: '3.5rem 2rem', border: '1px dashed #cbd5e1' }}>
+            <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem' }} aria-hidden="true">📚</div>
+            <p className="card-title" style={{ marginBottom: '0.5rem', fontSize: '1.25rem' }}>No study resources uploaded yet</p>
+            <p className="card-desc" style={{ maxWidth: '520px', margin: '0 auto 1.5rem auto' }}>
+              Study materials and notes for {cls.name} are currently being published by teachers. Please check back soon or browse other available classes.
             </p>
+            <Link href="/" className="btn-primary" style={{ display: 'inline-block' }}>
+              ← Return to All Grades
+            </Link>
           </div>
         ) : (
           <div className="subjects-grid">
-            {cls.subjects.map((sub) => (
+            {activeSubjects.map((sub) => (
               <div key={sub.slug} className="subject-card">
                 <div className="subject-card-top">
                   <div className="subject-icon-wrap" aria-hidden="true">
@@ -110,7 +119,7 @@ export default async function ClassPage({ params }: PageProps) {
                     </span>
                   )}
                   <span className="meta-tag">
-                    {sub.published_resources_count || 0} Notes Available
+                    {(sub.published_resources_count || sub.resources_count || 0)} Notes Available
                   </span>
                 </div>
 

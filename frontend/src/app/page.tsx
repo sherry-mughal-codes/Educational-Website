@@ -2,7 +2,8 @@ import Link from 'next/link';
 import { getClasses, searchResources } from '@/lib/api';
 import SearchBar from '@/components/SearchBar';
 
-export const revalidate = 60; // Refresh data every 60 seconds
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 export default async function HomePage() {
   const [classes, recentData] = await Promise.all([
@@ -66,24 +67,29 @@ export default async function HomePage() {
 
           {/* Quick Grade Selector Tiles */}
           <div className="hero-grade-tiles" aria-label="Select Matriculation Grade">
-            {classes.map((cls) => (
-              <Link
-                key={cls.id}
-                href={`/${cls.slug}/`}
-                className="hero-grade-tile"
-                title={`Explore ${cls.name} Curriculum & Study Notes`}
-              >
-                <div className="hero-grade-icon" aria-hidden="true">
-                  {cls.grade_number}
-                </div>
-                <div className="hero-grade-info">
-                  <div className="hero-grade-title">{cls.name}</div>
-                  <div className="hero-grade-sub">
-                    {cls.subjects.length} Subjects • Federal Board Syllabus
+            {classes.map((cls) => {
+              const activeSubjects = cls.subjects.filter(
+                (sub) => (sub.resources_count || sub.published_resources_count || 0) > 0
+              );
+              return (
+                <Link
+                  key={cls.id}
+                  href={`/${cls.slug}/`}
+                  className="hero-grade-tile"
+                  title={`Explore ${cls.name} Curriculum & Study Notes`}
+                >
+                  <div className="hero-grade-icon" aria-hidden="true">
+                    {cls.grade_number}
                   </div>
-                </div>
-              </Link>
-            ))}
+                  <div className="hero-grade-info">
+                    <div className="hero-grade-title">{cls.name}</div>
+                    <div className="hero-grade-sub">
+                      {activeSubjects.length} {activeSubjects.length === 1 ? 'Subject' : 'Subjects'} with Notes • Federal Board Syllabus
+                    </div>
+                  </div>
+                </Link>
+              );
+            })}
           </div>
         </section>
 
@@ -97,46 +103,57 @@ export default async function HomePage() {
           </div>
 
           <div className="grid-2">
-            {classes.map((cls) => (
-              <div key={cls.id} className="class-card">
-                <div className="class-card-header">
-                  <div>
-                    <span className="class-tag">Grade {cls.grade_number} (SSC-{cls.grade_number === 9 ? 'I' : 'II'})</span>
-                    <h3 className="class-card-title">{cls.name}</h3>
+            {classes.map((cls) => {
+              const activeSubjects = cls.subjects.filter(
+                (sub) => (sub.resources_count || sub.published_resources_count || 0) > 0
+              );
+              return (
+                <div key={cls.id} className="class-card">
+                  <div className="class-card-header">
+                    <div>
+                      <span className="class-tag">Grade {cls.grade_number} (SSC-{cls.grade_number === 9 ? 'I' : 'II'})</span>
+                      <h3 className="class-card-title">{cls.name}</h3>
+                    </div>
+                    <Link
+                      href={`/${cls.slug}/`}
+                      className="btn-primary"
+                      title={`View subjects for ${cls.name}`}
+                    >
+                      Explore Grade →
+                    </Link>
                   </div>
-                  <Link
-                    href={`/${cls.slug}/`}
-                    className="btn-primary"
-                    title={`View all subjects for ${cls.name}`}
-                  >
-                    Explore Grade →
-                  </Link>
-                </div>
 
-                <p className="class-card-desc">{cls.description}</p>
+                  <p className="class-card-desc">{cls.description}</p>
 
-                <div className="class-card-subjects">
-                  <h4 className="subjects-heading">
-                    Core Subjects ({cls.subjects.length}):
-                  </h4>
-                  <div className="subject-tags-list">
-                    {cls.subjects.map((sub) => (
-                      <Link
-                        key={sub.id}
-                        href={`/${cls.slug}/${sub.slug}/`}
-                        className="subject-tag-chip"
-                        title={`${sub.name} for ${cls.name}`}
-                      >
-                        <span aria-hidden="true">{getSubjectIcon(sub.name)}</span> {sub.name}
-                        {sub.resources_count ? (
-                          <span className="tag-count">({sub.resources_count})</span>
-                        ) : null}
-                      </Link>
-                    ))}
+                  <div className="class-card-subjects">
+                    <h4 className="subjects-heading">
+                      Available Subjects ({activeSubjects.length}):
+                    </h4>
+                    {activeSubjects.length === 0 ? (
+                      <p style={{ fontSize: '0.875rem', color: '#64748b', fontStyle: 'italic', margin: '0.5rem 0' }}>
+                        No subjects with uploaded resources yet.
+                      </p>
+                    ) : (
+                      <div className="subject-tags-list">
+                        {activeSubjects.map((sub) => (
+                          <Link
+                            key={sub.id}
+                            href={`/${cls.slug}/${sub.slug}/`}
+                            className="subject-tag-chip"
+                            title={`${sub.name} for ${cls.name}`}
+                          >
+                            <span aria-hidden="true">{getSubjectIcon(sub.name)}</span> {sub.name}
+                            {(sub.resources_count || sub.published_resources_count) ? (
+                              <span className="tag-count">({sub.resources_count || sub.published_resources_count})</span>
+                            ) : null}
+                          </Link>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
 

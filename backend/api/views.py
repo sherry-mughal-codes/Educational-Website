@@ -145,6 +145,7 @@ def class_list(request):
                 "description": cs.subject.description,
                 "total_chapters": cs.total_chapters,
                 "resources_count": published_resources_count,
+                "published_resources_count": published_resources_count,
             })
 
         data.append({
@@ -168,6 +169,7 @@ def class_detail(request, class_slug):
     for cs in cls.class_subjects.filter(is_active=True).select_related('subject'):
         published_count = cs.resources.filter(is_published=True).count()
         subjects.append({
+            "id": cs.subject.id,
             "name": cs.subject.name,
             "slug": cs.subject.slug,
             "code": cs.subject.code,
@@ -176,10 +178,12 @@ def class_detail(request, class_slug):
             "syllabus_overview": cs.syllabus_overview,
             "total_chapters": cs.total_chapters,
             "published_resources_count": published_count,
+            "resources_count": published_count,
             "url": f"/{cls.slug}/{cs.subject.slug}/",
         })
 
     return JsonResponse({
+        "id": cls.id,
         "name": cls.name,
         "grade_number": cls.grade_number,
         "slug": cls.slug,
