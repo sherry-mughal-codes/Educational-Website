@@ -10,7 +10,7 @@ from functools import wraps
 from django.conf import settings
 from django.http import JsonResponse, Http404, FileResponse, HttpResponseRedirect
 from django.db import connection, transaction
-from django.db.models import Q, Count, Sum, Avg, Max
+from django.db.models import Q, Count, Sum, Avg, Max, ProtectedError
 from django.utils import timezone
 from django.utils.text import slugify
 from django.shortcuts import get_object_or_404
@@ -1374,31 +1374,55 @@ def admin_resource_detail(request, resource_id):
         }, status=200)
 
     elif request.method == 'DELETE':
-        # Safe deletion: remove record and clean up associated storage file
-        resource_id_val = resource.id
-        title = resource.title
-        file_to_remove = None
-        if resource.pdf_file and hasattr(resource.pdf_file, 'path'):
-            try:
-                if os.path.isfile(resource.pdf_file.path):
-                    file_to_remove = resource.pdf_file.path
-            except Exception:
+        force_delete = request.GET.get('force') == 'true'
+
+        try:
+            with transaction.atomic():
+                resource_id_val = resource.id
+                title = resource.title
                 file_to_remove = None
+                if resource.pdf_file and hasattr(resource.pdf_file, 'path'):
+                    try:
+                        if os.path.isfile(resource.pdf_file.path):
+                            file_to_remove = resource.pdf_file.path
+                    except Exception:
+                        file_to_remove = None
 
-        resource.delete()
+                if force_delete:
+                    # Clean up associated purchases and orders if explicitly requested by admin
+                    resource.purchases.all().delete()
+                    resource.orders.all().delete()
 
-        if file_to_remove:
-            try:
-                if os.path.isfile(file_to_remove):
-                    os.remove(file_to_remove)
-            except Exception as exc:
-                logger.warning(f"Failed to remove deleted resource file: {exc}")
+                resource.delete()
 
-        return JsonResponse({
-            "success": True,
-            "deleted_id": resource_id_val,
-            "message": f"Resource '{title}' deleted successfully.",
-        }, status=200)
+                if file_to_remove:
+                    try:
+                        if os.path.isfile(file_to_remove):
+                            os.remove(file_to_remove)
+                    except Exception as exc:
+                        logger.warning(f"Failed to remove deleted resource file: {exc}")
+
+                return JsonResponse({
+                    "success": True,
+                    "deleted_id": resource_id_val,
+                    "message": f"Resource '{title}' deleted successfully.",
+                }, status=200)
+
+        except ProtectedError:
+            orders_count = resource.orders.count()
+            purchases_count = resource.purchases.count()
+            return JsonResponse({
+                "error": (
+                    f"Cannot delete '{resource.title}' because {purchases_count} student purchase(s) and {orders_count} order(s) are linked to it. "
+                    "Unpublish the resource to hide it from all students while preserving purchase records, or use Force Delete to remove it and its attached test orders."
+                ),
+                "is_protected": True,
+                "orders_count": orders_count,
+                "purchases_count": purchases_count,
+            }, status=400)
+        except Exception as exc:
+            logger.exception(f"Error deleting resource {resource_id}: {exc}")
+            return JsonResponse({"error": f"Failed to delete resource: {str(exc)}"}, status=500)
 
     return JsonResponse({"error": "Method not allowed"}, status=405)
 

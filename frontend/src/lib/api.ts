@@ -322,16 +322,39 @@ export async function adminTogglePublish(id: number | string): Promise<{ success
   return { success: true, is_published: data.is_published };
 }
 
-export async function adminDeleteResource(id: number | string): Promise<{ success: boolean; error?: string }> {
-  const res = await fetch(`${API_BASE}/api/admin/resources/${id}/`, {
-    method: 'DELETE',
-    credentials: 'include',
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    return { success: false, error: data.error || 'Failed to delete resource' };
+export async function adminDeleteResource(
+  id: number | string,
+  force = false
+): Promise<{ success: boolean; error?: string; is_protected?: boolean }> {
+  try {
+    const qs = force ? '?force=true' : '';
+    const res = await fetch(`${API_BASE}/api/admin/resources/${id}/${qs}`, {
+      method: 'DELETE',
+      credentials: 'include',
+    });
+    let data: any = null;
+    try {
+      data = await res.json();
+    } catch {
+      return {
+        success: false,
+        error: `Server responded with status ${res.status} (${res.statusText || 'Error'}).`,
+      };
+    }
+    if (!res.ok) {
+      return {
+        success: false,
+        error: data?.error || `Failed to delete resource (Status ${res.status}).`,
+        is_protected: data?.is_protected,
+      };
+    }
+    return { success: true };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err?.message || 'Network error communicating with the server.',
+    };
   }
-  return { success: true };
 }
 
 export async function adminGetStructure() {

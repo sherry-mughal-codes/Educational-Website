@@ -34,6 +34,8 @@ export default function AdminResourcesPage() {
   // Delete modal state
   const [resourceToDelete, setResourceToDelete] = useState<ResourceItem | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [isProtected, setIsProtected] = useState<boolean>(false);
 
   // Quick PDF upload state
   const [uploadingId, setUploadingId] = useState<number | null>(null);
@@ -112,21 +114,50 @@ export default function AdminResourcesPage() {
   };
 
   // Delete Resource confirmation
-  const handleConfirmDelete = async () => {
+  const handleConfirmDelete = async (force = false) => {
     if (!resourceToDelete) return;
     setIsDeleting(true);
+    setDeleteError(null);
     try {
-      const res = await adminDeleteResource(resourceToDelete.id);
+      const res = await adminDeleteResource(resourceToDelete.id, force);
       if (res.success) {
         setResources((prev) => prev.filter((r) => r.id !== resourceToDelete.id));
         setSuccessMessage(`Deleted "${resourceToDelete.title}" and cleaned up storage.`);
         setResourceToDelete(null);
+        setDeleteError(null);
+        setIsProtected(false);
         setTimeout(() => setSuccessMessage(null), 3500);
       } else {
-        setErrorMessage(res.error || 'Failed to delete resource.');
+        setDeleteError(res.error || 'Failed to delete resource.');
+        setIsProtected(Boolean(res.is_protected));
       }
-    } catch {
-      setErrorMessage('Network error deleting resource.');
+    } catch (err: any) {
+      setDeleteError(err?.message || 'Network error deleting resource.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  // Unpublish resource instead of deleting when protected
+  const handleUnpublishInstead = async () => {
+    if (!resourceToDelete) return;
+    setIsDeleting(true);
+    try {
+      const res = await adminTogglePublish(resourceToDelete.id);
+      if (res.success) {
+        setResources((prev) =>
+          prev.map((r) => (r.id === resourceToDelete.id ? { ...r, is_published: res.is_published } : r))
+        );
+        setSuccessMessage(`Unpublished "${resourceToDelete.title}". It is now hidden from students.`);
+        setResourceToDelete(null);
+        setDeleteError(null);
+        setIsProtected(false);
+        setTimeout(() => setSuccessMessage(null), 3500);
+      } else {
+        setDeleteError(res.error || 'Failed to unpublish resource.');
+      }
+    } catch (err: any) {
+      setDeleteError(err?.message || 'Network error updating resource.');
     } finally {
       setIsDeleting(false);
     }
@@ -394,7 +425,11 @@ export default function AdminResourcesPage() {
                         </Link>
                         <button
                           type="button"
-                          onClick={() => setResourceToDelete(resource)}
+                          onClick={() => {
+                            setResourceToDelete(resource);
+                            setDeleteError(null);
+                            setIsProtected(false);
+                          }}
                           className="btn-icon btn-icon-danger"
                           title="Delete resource permanently"
                         >
@@ -490,36 +525,95 @@ export default function AdminResourcesPage() {
               </div>
             </div>
 
-            <div className="modal-warning-alert">
-              <strong>Notice:</strong> This action permanently removes the resource record and wipes the associated PDF file from storage. Any students who purchased this resource will no longer be able to download the file.
-            </div>
+            {deleteError && (
+              <div style={{
+                background: '#fff1f2',
+                border: '1.5px solid #fecdd3',
+                borderRadius: '10px',
+                padding: '0.875rem 1rem',
+                marginBottom: '1rem',
+                color: '#9f1239',
+                fontSize: '0.85rem',
+                lineHeight: 1.5,
+              }}>
+                <strong>Action Blocked: </strong> {deleteError}
+              </div>
+            )}
 
-            <div className="modal-actions">
+            {!deleteError && (
+              <div className="modal-warning-alert">
+                <strong>Notice:</strong> This action permanently removes the resource record and wipes the associated PDF file from storage. Any students who purchased this resource will no longer be able to download the file.
+              </div>
+            )}
+
+            <div className="modal-actions" style={{ flexWrap: 'wrap', gap: '0.5rem' }}>
               <button
                 type="button"
-                onClick={() => setResourceToDelete(null)}
+                onClick={() => {
+                  setResourceToDelete(null);
+                  setDeleteError(null);
+                  setIsProtected(false);
+                }}
                 className="btn-outline-sm"
                 disabled={isDeleting}
                 style={{ padding: '0.625rem 1.25rem', borderRadius: '8px' }}
               >
                 Cancel
               </button>
-              <button
-                type="button"
-                onClick={handleConfirmDelete}
-                className="btn-danger"
-                disabled={isDeleting}
-                style={{
-                  padding: '0.625rem 1.35rem',
-                  borderRadius: '8px',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '0.375rem',
-                  boxShadow: '0 2px 4px rgba(220, 38, 38, 0.25)',
-                }}
-              >
-                {isDeleting ? 'Deleting...' : '🗑️ Confirm & Delete'}
-              </button>
+
+              {isProtected ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleUnpublishInstead}
+                    disabled={isDeleting}
+                    style={{
+                      padding: '0.625rem 1.25rem',
+                      borderRadius: '8px',
+                      background: '#047857',
+                      color: '#ffffff',
+                      border: 'none',
+                      fontWeight: 700,
+                      fontSize: '0.875rem',
+                      cursor: isDeleting ? 'wait' : 'pointer',
+                    }}
+                  >
+                    Hide / Unpublish from Students
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleConfirmDelete(true)}
+                    disabled={isDeleting}
+                    className="btn-danger"
+                    style={{
+                      padding: '0.625rem 1.25rem',
+                      borderRadius: '8px',
+                      fontWeight: 700,
+                      fontSize: '0.875rem',
+                      cursor: isDeleting ? 'wait' : 'pointer',
+                    }}
+                  >
+                    {isDeleting ? 'Deleting...' : 'Force Delete (with Test Orders)'}
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => handleConfirmDelete(false)}
+                  className="btn-danger"
+                  disabled={isDeleting}
+                  style={{
+                    padding: '0.625rem 1.35rem',
+                    borderRadius: '8px',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.375rem',
+                    boxShadow: '0 2px 4px rgba(220, 38, 38, 0.25)',
+                  }}
+                >
+                  {isDeleting ? 'Deleting...' : '🗑️ Confirm & Delete'}
+                </button>
+              )}
             </div>
           </div>
         </div>
