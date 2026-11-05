@@ -73,3 +73,4 @@ def list_available_gateways() -> List[Dict[str, Any]]:
         })
 
     return gateways
+

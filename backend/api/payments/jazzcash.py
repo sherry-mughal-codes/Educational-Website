@@ -180,3 +180,4 @@ class JazzCashGateway(BasePaymentGateway):
             error_message='',
             raw_data=request_data
         )
+

@@ -133,3 +133,4 @@ class EasypaisaGateway(BasePaymentGateway):
             error_message='',
             raw_data=request_data
         )
+

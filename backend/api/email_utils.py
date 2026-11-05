@@ -149,3 +149,4 @@ def send_payment_failed_alert(order, error_msg=""):
         return True
     except Exception:
         return False
+
