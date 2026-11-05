@@ -46,6 +46,7 @@ export default async function SubjectPage({ params }: PageProps) {
   }
 
   const { class: cls, subject, resources } = data;
+  const practiceChapters = data.practice_chapters_count ?? subject.practice_chapters_count ?? 0;
 
   const breadcrumbs = [
     { label: cls.name, href: `/${cls.slug}/` },
@@ -79,12 +80,12 @@ export default async function SubjectPage({ params }: PageProps) {
         gap: '1rem',
       }}>
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.2rem' }}>
-            <span style={{ background: '#047857', color: '#ffffff', fontSize: '0.6875rem', fontWeight: 800, textTransform: 'uppercase', padding: '0.1rem 0.45rem', borderRadius: '4px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+            <span style={{ background: '#047857', color: '#ffffff', fontSize: '0.6875rem', fontWeight: 800, textTransform: 'uppercase', padding: '0.12rem 0.5rem', borderRadius: '4px' }}>
               Interactive Practice
             </span>
-            <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#047857' }}>
-              {subject.total_chapters > 0 ? `${subject.total_chapters} Chapters • ` : ''}Instant Solutions
+            <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#047857' }}>
+              {practiceChapters} {practiceChapters === 1 ? 'Chapter' : 'Chapters'} Practice Available • Instant Solutions
             </span>
           </div>
           <h2 style={{ fontSize: '1.15rem', fontWeight: 800, color: '#064e3b', margin: '0 0 0.15rem 0' }}>
@@ -95,13 +96,31 @@ export default async function SubjectPage({ params }: PageProps) {
           </p>
         </div>
 
-        <Link
-          href={`/${cls.slug}/${subject.slug}/practice/`}
-          className="btn-primary"
-          style={{ padding: '0.625rem 1.25rem', borderRadius: '8px', fontSize: '0.875rem' }}
-        >
-          Start Chapter Practice 🎯
-        </Link>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.4rem' }}>
+          <span style={{
+            fontSize: '0.75rem',
+            fontWeight: 700,
+            color: practiceChapters > 0 ? '#047857' : '#64748b',
+            background: practiceChapters > 0 ? '#d1fae5' : '#f1f5f9',
+            padding: '0.2rem 0.65rem',
+            borderRadius: '9999px',
+            border: `1px solid ${practiceChapters > 0 ? '#6ee7b7' : '#cbd5e1'}`,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '0.35rem',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+          }}>
+            <span>📖</span>
+            <span>{practiceChapters} {practiceChapters === 1 ? 'Chapter Available' : 'Chapters Available'}</span>
+          </span>
+          <Link
+            href={`/${cls.slug}/${subject.slug}/practice/`}
+            className="btn-primary"
+            style={{ padding: '0.625rem 1.25rem', borderRadius: '8px', fontSize: '0.875rem', whiteSpace: 'nowrap' }}
+          >
+            Start Chapter Practice 🎯
+          </Link>
+        </div>
       </section>
 
       {/* Available Study Resources List */}

@@ -60,6 +60,12 @@ export default function AdminNav() {
             Site Pages
           </Link>
           <Link
+            href="/admin/profile/"
+            className={`admin-nav-link ${pathname === '/admin/profile/' ? 'active' : ''}`}
+          >
+            Profile
+          </Link>
+          <Link
             href="/admin/resources/new/"
             className={`admin-nav-link ${pathname === '/admin/resources/new/' ? 'active' : ''}`}
           >
@@ -68,6 +74,14 @@ export default function AdminNav() {
         </nav>
 
         <div className="admin-nav-actions">
+          <Link
+            href="/admin/profile/"
+            className={`admin-link-public ${pathname === '/admin/profile/' ? 'active' : ''}`}
+            title="View Administrator Profile & Personal Information"
+            style={{ fontWeight: 600 }}
+          >
+            👤 Profile
+          </Link>
           <Link
             href="/"
             target="_blank"

@@ -219,6 +219,16 @@ def subject_detail(request, class_slug, subject_slug):
         for r in resources
     ]
 
+    # Calculate actual number of chapters that have published practice available
+    practice_chapters_count = class_subject.chapters.filter(
+        practice_topics__is_published=True
+    ).distinct().count()
+
+    total_practice_topics_count = PracticeTopic.objects.filter(
+        chapter__class_subject=class_subject,
+        is_published=True
+    ).count()
+
     return JsonResponse({
         "class": {
             "name": class_level.name,
@@ -233,7 +243,11 @@ def subject_detail(request, class_slug, subject_slug):
             "description": subject.description,
             "syllabus_overview": class_subject.syllabus_overview,
             "total_chapters": class_subject.total_chapters,
+            "practice_chapters_count": practice_chapters_count,
+            "practice_topics_count": total_practice_topics_count,
         },
+        "practice_chapters_count": practice_chapters_count,
+        "practice_topics_count": total_practice_topics_count,
         "resources_count": len(resources_data),
         "resources": resources_data,
     }, status=200)
@@ -750,6 +764,23 @@ def student_dashboard(request):
         return JsonResponse({"error": "Authentication required. Please sign in."}, status=401)
 
     user = request.user
+    is_staff = user.is_staff or user.is_superuser
+
+    if is_staff:
+        # Administrators manage the platform and do not purchase notes
+        return JsonResponse({
+            "student": {
+                "id": user.id,
+                "email": user.email,
+                "username": user.username,
+                "full_name": user.first_name or user.username,
+                "is_staff": True,
+                "date_joined": user.date_joined.isoformat(),
+            },
+            "purchases": [],
+            "orders": [],
+        }, status=200)
+
     purchases = user.purchases.filter(is_active=True).select_related(
         'resource__class_subject__class_level',
         'resource__class_subject__subject',
@@ -1099,13 +1130,19 @@ def admin_login(request):
 
     login(request, user)
 
+    full_name = user.get_full_name() or user.username
     return JsonResponse({
         "success": True,
         "user": {
             "username": user.username,
             "email": user.email,
+            "full_name": full_name,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
             "is_staff": user.is_staff,
             "is_superuser": user.is_superuser,
+            "date_joined": user.date_joined.isoformat() if user.date_joined else None,
+            "last_login": user.last_login.isoformat() if user.last_login else None,
         }
     }, status=200)
 
@@ -1121,13 +1158,19 @@ def admin_me(request):
         return JsonResponse({"authenticated": False, "user": None}, status=200)
 
     is_admin = request.user.is_staff or request.user.is_superuser
+    full_name = request.user.get_full_name() or request.user.username if is_admin else ""
     return JsonResponse({
         "authenticated": is_admin,
         "user": {
             "username": request.user.username,
             "email": request.user.email,
+            "full_name": full_name,
+            "first_name": request.user.first_name,
+            "last_name": request.user.last_name,
             "is_staff": request.user.is_staff,
             "is_superuser": request.user.is_superuser,
+            "date_joined": request.user.date_joined.isoformat() if request.user.date_joined else None,
+            "last_login": request.user.last_login.isoformat() if request.user.last_login else None,
         } if is_admin else None,
     }, status=200)
 

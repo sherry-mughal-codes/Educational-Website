@@ -28,6 +28,10 @@ export default function StudentDashboardPage() {
           router.replace('/student/login/?returnUrl=/student/dashboard/');
           return;
         }
+        if (dashRes.student?.is_staff) {
+          router.replace('/admin/profile/');
+          return;
+        }
         setData(dashRes);
         setPracticeProgress(progRes);
       })

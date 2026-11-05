@@ -17,6 +17,8 @@ export interface SubjectItem {
   total_chapters: number;
   resources_count?: number;
   published_resources_count?: number;
+  practice_chapters_count?: number;
+  practice_topics_count?: number;
   syllabus_overview?: string;
   url?: string;
 }
@@ -153,6 +155,8 @@ export async function getSubject(classSlug: string, subjectSlug: string) {
     class: { name: string; grade_number: number; slug: string };
     subject: SubjectItem;
     resources_count: number;
+    practice_chapters_count?: number;
+    practice_topics_count?: number;
     resources: ResourceItem[];
   }>(`/api/classes/${classSlug}/${subjectSlug}/`, {
     cache: 'no-store',
@@ -203,8 +207,13 @@ export async function getSitemapData() {
 export interface AdminUser {
   username: string;
   email: string;
+  full_name?: string;
+  first_name?: string;
+  last_name?: string;
   is_staff: boolean;
   is_superuser: boolean;
+  date_joined?: string;
+  last_login?: string;
 }
 
 export async function adminLogin(username: string, password: string): Promise<{ success: boolean; error?: string; user?: AdminUser }> {
@@ -426,6 +435,7 @@ export async function adminCreateChapter(payload: {
 export interface StudentUser {
   id: number;
   email: string;
+  username?: string;
   full_name: string;
   is_staff?: boolean;
   is_superuser?: boolean;
