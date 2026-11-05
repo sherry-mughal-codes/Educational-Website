@@ -122,35 +122,29 @@ export default async function ResourceDetailPage({ params }: PageProps) {
           <section className="resource-purchase-banner" aria-label="Purchase and Download">
             <div className="purchase-banner-left">
               <span className="purchase-badge">Complete Subject Guide</span>
-              <h2 className="purchase-banner-title">Download Complete Offline PDF Packet</h2>
+              <h2 className="purchase-banner-title">Complete Offline PDF Guide</h2>
               <p className="purchase-banner-desc">
-                Get the complete textbook-solved guide with all units,
-                FBISE Student Learning Outcomes (SLO) benchmarks, and solved numericals in one verified document.
+                Verified complete textbook solutions, board exercise answers, and formulas for offline study.
               </p>
-              <div className="purchase-banner-features">
-                <span>✓ High-Resolution Offline PDF</span>
-                {resource.page_count > 0 && <span>✓ {resource.page_count} Pages</span>}
-                <span>✓ Lifetime Access &amp; Free Updates</span>
-              </div>
             </div>
 
             <div className="purchase-banner-right">
               <div className="purchase-pricing">
-                <span className="price-tag-sub">One-Time Subject Price</span>
+                <span className="price-tag-sub">Subject Price</span>
                 <span className="price-tag-val">PKR {resource.price || '100'}</span>
               </div>
 
               {resource.user_has_purchased && resource.download_url ? (
                 <div className="owned-action-box">
-                  <span className="owned-indicator">✓ You Own This Subject</span>
+                  <span className="owned-indicator">✓ Verified Purchase</span>
                   <a
                     href={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${resource.download_url}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="btn-primary btn-large w-full text-center"
-                    title="Download complete paid PDF"
+                    title="Download verified PDF"
                   >
-                    Download PDF ↓
+                    📥 Download PDF ↓
                   </a>
                 </div>
               ) : (
@@ -165,7 +159,7 @@ export default async function ResourceDetailPage({ params }: PageProps) {
             </div>
           </section>
 
-          {/* Online PDF Reader Section */}
+          {/* Online PDF Reader Section with Strict Payment-Gated Download */}
           <PdfViewer
             title={resource.title}
             hasPdf={Boolean(resource.has_pdf)}
@@ -175,60 +169,40 @@ export default async function ResourceDetailPage({ params }: PageProps) {
             classSlug={cls.slug}
             subjectSlug={subject.slug}
             resourceSlug={resource.slug}
+            userHasPurchased={Boolean(resource.user_has_purchased)}
+            downloadUrl={resource.download_url}
+            price={resource.price}
           />
 
-          {/* Educational Content & Syllabus Alignment Preview */}
+          {/* Educational Content & Syllabus Alignment Preview (Brief & Usable) */}
           <section className="resource-content-box">
-            <h2 className="content-box-title">Resource Content &amp; Syllabus Coverage</h2>
+            <h2 className="content-box-title">Curriculum Scope &amp; Summary</h2>
 
             <div className="content-box-body">
-              <p className="content-intro">
-                This academic packet is formatted according to the official Federal Board of
-                Intermediate and Secondary Education (FBISE) examination guidelines. It contains
-                rigorous conceptual answers, solved numerical examples, and textbook exercise solutions.
-              </p>
-
               {resource.content_preview ? (
                 <div className="content-preview-text">
                   {resource.content_preview.split('\n\n').map((paragraph, index) => (
                     <p key={index}>{paragraph}</p>
                   ))}
                 </div>
-              ) : null}
-
-              <div className="features-checklist">
-                <h3 className="checklist-heading">What is included in this document:</h3>
-                <ul className="feature-list">
-                  <li className="feature-item">
-                    <span className="check-icon">✓</span>
-                    <span><strong>Student Learning Outcomes (SLO) Mapping:</strong> Every chapter topic addresses specific knowledge and analytical benchmarks mandated by the board.</span>
-                  </li>
-                  <li className="feature-item">
-                    <span className="check-icon">✓</span>
-                    <span><strong>Textbook Exercises Solved:</strong> Comprehensive step-by-step solutions to short questions, comprehensive questions, and review problems.</span>
-                  </li>
-                  <li className="feature-item">
-                    <span className="check-icon">✓</span>
-                    <span><strong>Exam Technique &amp; Formulas:</strong> Key definitions, formula sheets, derivation checklists, and high-yield examination tips.</span>
-                  </li>
-                  <li className="feature-item">
-                    <span className="check-icon">✓</span>
-                    <span><strong>Complete Subject Structure:</strong> Supplied as one unified subject packet for focused continuous revision.</span>
-                  </li>
-                </ul>
-              </div>
+              ) : (
+                <p className="content-intro" style={{ margin: 0 }}>
+                  This verified study guide covers complete textbook review exercises, solved numericals,
+                  key definitions, and exam preparation notes formulated strictly according to the Federal Board syllabus.
+                </p>
+              )}
             </div>
           </section>
 
-          {/* Academic Attribution & Disclaimer */}
-          <section className="attribution-card">
-            <h3 className="attribution-title">Source Attribution &amp; Academic Standard</h3>
-            <p className="attribution-text">
-              Compiled and reviewed by <strong>{resource.author_attribution}</strong> in accordance
-              with the National Curriculum Framework. Educational materials are published for academic
-              revision and student self-study under Fair Use principles.
-            </p>
-          </section>
+          {/* Academic Attribution */}
+          {resource.author_attribution && (
+            <section className="attribution-card">
+              <h3 className="attribution-title">Academic Source</h3>
+              <p className="attribution-text" style={{ margin: 0 }}>
+                Compiled by <strong>{resource.author_attribution}</strong> in alignment with FBISE matriculation standards.
+              </p>
+            </section>
+          )}
 
           {/* Genuine Related Resources */}
           {resource.related_resources && resource.related_resources.length > 0 && (

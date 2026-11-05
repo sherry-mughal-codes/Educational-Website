@@ -13,6 +13,9 @@ interface PdfViewerProps {
   classSlug?: string;
   subjectSlug?: string;
   resourceSlug?: string;
+  userHasPurchased?: boolean;
+  downloadUrl?: string | null;
+  price?: string | number;
 }
 
 export default function PdfViewer({
@@ -24,6 +27,9 @@ export default function PdfViewer({
   classSlug,
   subjectSlug,
   resourceSlug,
+  userHasPurchased = false,
+  downloadUrl,
+  price = '100',
 }: PdfViewerProps) {
   // Start with reader open on screen so student can read immediately without leaving site
   const [isOpen, setIsOpen] = useState(true);
@@ -34,9 +40,10 @@ export default function PdfViewer({
       trackEvent('view_pdf_notes_on_screen', {
         resource_title: title,
         page_count: pageCount,
+        is_paid_user: userHasPurchased,
       });
     }
-  }, [hasPdf, streamUrl, title, pageCount]);
+  }, [hasPdf, streamUrl, title, pageCount, userHasPurchased]);
 
   const formattedSize = fileSizeBytes > 0
     ? `${(fileSizeBytes / (1024 * 1024)).toFixed(1)} MB`
@@ -44,52 +51,63 @@ export default function PdfViewer({
 
   if (!hasPdf || !streamUrl) {
     return (
-      <div className="pdf-standby-banner">
-        <div className="standby-icon" aria-hidden="true">📖</div>
-        <div className="standby-text">
-          <h3 className="standby-title">Online Study Notes Format</h3>
-          <p className="standby-desc">
-            Complete revision notes and chapter summaries are available directly in the syllabus overview below.
-            Verified high-resolution PDF digitization is synchronized by our academic panel.
-          </p>
-        </div>
+      <div className="pdf-standby-banner" style={{ padding: '2rem', textAlign: 'center', background: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+        <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📖</div>
+        <h3 style={{ fontSize: '1.1rem', fontWeight: 700, margin: '0 0 0.25rem 0' }}>Online Study Notes</h3>
+        <p style={{ color: '#64748b', fontSize: '0.875rem', margin: 0 }}>
+          Study materials are being synchronized. Please check back shortly.
+        </p>
       </div>
     );
   }
 
-  const fullStreamUrl = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${streamUrl}`;
+  // Force toolbar=0 & navpanes=0 to strictly suppress browser PDF download/print icons for unpaid reading
+  const secureStreamUrl = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${streamUrl}#toolbar=0&navpanes=0&scrollbar=1`;
+  const fullDownloadUrl = downloadUrl
+    ? `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${downloadUrl}`
+    : null;
+
   const webReaderUrl = (classSlug && subjectSlug && resourceSlug)
     ? `/${classSlug}/${subjectSlug}/${resourceSlug}/reader/`
     : null;
 
   return (
     <>
-      <section className="pdf-reader-section" aria-label="Online PDF Reader">
-        <div className="pdf-reader-header">
-          <div className="pdf-reader-info">
-            <span className="pdf-badge">Official Document</span>
-            <h2 className="pdf-reader-title">Online Study Notes Reader</h2>
-            <p className="pdf-reader-desc">
-              Read verified study material directly on this screen without leaving the website.
-              {pageCount > 0 && ` (${pageCount} Pages)`}
-              {formattedSize && ` • ${formattedSize}`}
-            </p>
+      <section className="pdf-reader-section" aria-label="Online PDF Reader" style={{ margin: '1.5rem 0' }}>
+        <div className="pdf-reader-header" style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '1rem',
+          padding: '1rem 1.25rem',
+          background: '#f8fafc',
+          border: '1px solid #e2e8f0',
+          borderRadius: '12px 12px 0 0',
+        }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+              <span style={{ fontSize: '0.6875rem', fontWeight: 800, background: '#047857', color: '#ffffff', padding: '0.1rem 0.45rem', borderRadius: '4px', textTransform: 'uppercase' }}>
+                Online Reader
+              </span>
+              <span style={{ fontSize: '0.8125rem', color: '#64748b' }}>
+                {pageCount > 0 ? `${pageCount} Pages` : ''} {formattedSize ? `• ${formattedSize}` : ''}
+              </span>
+            </div>
+            <h2 style={{ fontSize: '1.1rem', fontWeight: 700, margin: 0, color: '#0f172a' }}>
+              {title}
+            </h2>
           </div>
 
-          <div className="pdf-reader-actions">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
             <button
               type="button"
-              onClick={() => {
-                const nextState = !isOpen;
-                setIsOpen(nextState);
-                if (nextState) {
-                  trackEvent('toggle_reader_open', { resource_title: title });
-                }
-              }}
-              className="btn-primary"
+              onClick={() => setIsOpen(!isOpen)}
+              className="btn-outline-sm"
+              style={{ fontSize: '0.8125rem', padding: '0.4rem 0.75rem' }}
               title={isOpen ? 'Collapse reader' : 'Open online reader'}
             >
-              {isOpen ? 'Collapse Reader ✕' : 'Read Notes Online 📖'}
+              {isOpen ? 'Collapse ✕' : 'Read Online 📖'}
             </button>
 
             {isOpen && (
@@ -100,9 +118,10 @@ export default function PdfViewer({
                   trackEvent('expand_theater_reader', { resource_title: title });
                 }}
                 className="btn-outline-sm"
-                title="Expand reader to full screen on website"
+                style={{ fontSize: '0.8125rem', padding: '0.4rem 0.75rem' }}
+                title="Expand reader on website"
               >
-                ⛶ Fullscreen Web Reader
+                ⛶ Fullscreen
               </button>
             )}
 
@@ -112,35 +131,82 @@ export default function PdfViewer({
                 target="_blank"
                 rel="noopener noreferrer"
                 className="btn-outline-sm"
+                style={{ fontSize: '0.8125rem', padding: '0.4rem 0.75rem' }}
                 title="Open dedicated reader page on website"
                 onClick={() => {
                   trackEvent('open_dedicated_web_reader', { resource_title: title });
                 }}
               >
-                Open in Dedicated Tab ↗
+                Dedicated Tab ↗
               </Link>
             )}
+
+            {/* STRICT PAYMENT GATED DOWNLOAD BUTTON */}
+            {userHasPurchased && fullDownloadUrl ? (
+              <a
+                href={fullDownloadUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn-primary-sm"
+                style={{
+                  fontSize: '0.8125rem',
+                  padding: '0.4rem 0.85rem',
+                  background: '#047857',
+                  color: '#ffffff',
+                  textDecoration: 'none',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  fontWeight: 700,
+                  boxShadow: '0 2px 4px rgba(4, 120, 87, 0.2)',
+                }}
+                title="Download verified purchased PDF"
+              >
+                📥 Download PDF ↓
+              </a>
+            ) : resourceSlug ? (
+              <Link
+                href={`/checkout/${resourceSlug}/`}
+                className="btn-outline-sm"
+                style={{
+                  fontSize: '0.8125rem',
+                  padding: '0.4rem 0.85rem',
+                  color: '#047857',
+                  borderColor: '#047857',
+                  background: '#f0fdf4',
+                  fontWeight: 700,
+                  textDecoration: 'none',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                }}
+                title="Purchase complete subject PDF to unlock offline download"
+              >
+                🔒 Download Offline PDF (PKR {price})
+              </Link>
+            ) : null}
           </div>
         </div>
 
         {isOpen && (
-          <div className="pdf-embed-wrapper" style={{ marginTop: '1rem', border: '1px solid #cbd5e1', borderRadius: '12px', overflow: 'hidden', height: '680px', background: '#0f172a' }}>
+          <div
+            onContextMenu={(e) => e.preventDefault()}
+            style={{
+              border: '1px solid #e2e8f0',
+              borderTop: 'none',
+              borderRadius: '0 0 12px 12px',
+              overflow: 'hidden',
+              height: '680px',
+              background: '#0f172a',
+              position: 'relative',
+            }}
+          >
             <iframe
-              src={`${fullStreamUrl}#toolbar=1&navpanes=0`}
+              src={secureStreamUrl}
               title={`Online Reader: ${title}`}
-              className="pdf-iframe"
               style={{ width: '100%', height: '100%', border: 'none' }}
               loading="lazy"
-            >
-              <p className="pdf-fallback-text">
-                Your browser does not support embedded PDF viewing.{' '}
-                {webReaderUrl && (
-                  <Link href={webReaderUrl} className="inline-link">
-                    Open in website reader.
-                  </Link>
-                )}
-              </p>
-            </iframe>
+            />
           </div>
         )}
       </section>
@@ -175,26 +241,65 @@ export default function PdfViewer({
                 {title}
               </span>
             </div>
-            <button
-              type="button"
-              onClick={() => setIsTheaterMode(false)}
-              style={{
-                background: '#ef4444',
-                color: '#ffffff',
-                border: 'none',
-                padding: '0.4rem 0.85rem',
-                borderRadius: '6px',
-                fontWeight: 700,
-                fontSize: '0.8125rem',
-                cursor: 'pointer',
-              }}
-              title="Close fullscreen reader"
-            >
-              ✕ Exit Fullscreen
-            </button>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              {/* STRICT PAYMENT GATED DOWNLOAD BUTTON IN FULLSCREEN */}
+              {userHasPurchased && fullDownloadUrl ? (
+                <a
+                  href={fullDownloadUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    background: '#047857',
+                    color: '#ffffff',
+                    textDecoration: 'none',
+                    padding: '0.35rem 0.75rem',
+                    borderRadius: '6px',
+                    fontSize: '0.8125rem',
+                    fontWeight: 700,
+                  }}
+                  title="Download verified PDF"
+                >
+                  📥 Download PDF
+                </a>
+              ) : resourceSlug ? (
+                <Link
+                  href={`/checkout/${resourceSlug}/`}
+                  style={{
+                    background: '#334155',
+                    color: '#f8fafc',
+                    textDecoration: 'none',
+                    padding: '0.35rem 0.75rem',
+                    borderRadius: '6px',
+                    fontSize: '0.8125rem',
+                    fontWeight: 700,
+                  }}
+                >
+                  🔒 Unlock Offline PDF (PKR {price})
+                </Link>
+              ) : null}
+
+              <button
+                type="button"
+                onClick={() => setIsTheaterMode(false)}
+                style={{
+                  background: '#ef4444',
+                  color: '#ffffff',
+                  border: 'none',
+                  padding: '0.35rem 0.75rem',
+                  borderRadius: '6px',
+                  fontWeight: 700,
+                  fontSize: '0.8125rem',
+                  cursor: 'pointer',
+                }}
+                title="Close fullscreen reader"
+              >
+                ✕ Close
+              </button>
+            </div>
           </div>
           <iframe
-            src={`${fullStreamUrl}#toolbar=1&navpanes=0`}
+            src={secureStreamUrl}
             title={`Fullscreen On-Screen Reader: ${title}`}
             style={{ width: '100%', flex: 1, border: 'none' }}
           />

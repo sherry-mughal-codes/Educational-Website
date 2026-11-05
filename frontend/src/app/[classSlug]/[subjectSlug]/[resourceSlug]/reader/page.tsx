@@ -32,7 +32,8 @@ export default async function DedicatedReaderPage({ params }: PageProps) {
   }
 
   const { class: cls, subject } = resource;
-  const streamUrl = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${resource.pdf_stream_url}`;
+  // Strictly enforce toolbar=0 & navpanes=0 to prevent browser download/print buttons
+  const secureStreamUrl = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${resource.pdf_stream_url}#toolbar=0&navpanes=0&scrollbar=1`;
   const backUrl = `/${cls.slug}/${subject.slug}/${resource.slug}/`;
 
   return (
@@ -97,6 +98,8 @@ export default async function DedicatedReaderPage({ params }: PageProps) {
               📑 {resource.page_count} Pages
             </span>
           )}
+
+          {/* STRICT PAYMENT GATED DOWNLOAD BUTTON */}
           {resource.user_has_purchased && resource.download_url ? (
             <a
               href={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${resource.download_url}`}
@@ -113,7 +116,7 @@ export default async function DedicatedReaderPage({ params }: PageProps) {
               }}
               title="Download verified PDF"
             >
-              Download PDF ↓
+              📥 Download PDF ↓
             </a>
           ) : (
             <Link
@@ -128,16 +131,19 @@ export default async function DedicatedReaderPage({ params }: PageProps) {
                 fontWeight: 700,
               }}
             >
-              Get Offline PDF (PKR {resource.price || '100'})
+              🔒 Buy Offline PDF (PKR {resource.price || '100'})
             </Link>
           )}
         </div>
       </header>
 
       {/* Embedded Reader Canvas */}
-      <main style={{ flex: 1, width: '100%', height: 'calc(100vh - 54px)', background: '#0f172a' }}>
+      <main
+        onContextMenu={(e) => e.preventDefault()}
+        style={{ flex: 1, width: '100%', height: 'calc(100vh - 54px)', background: '#0f172a' }}
+      >
         <iframe
-          src={`${streamUrl}#toolbar=1&navpanes=0`}
+          src={secureStreamUrl}
           title={`Website Reader: ${resource.title}`}
           style={{ width: '100%', height: '100%', border: 'none' }}
         />
@@ -145,4 +151,3 @@ export default async function DedicatedReaderPage({ params }: PageProps) {
     </div>
   );
 }
-

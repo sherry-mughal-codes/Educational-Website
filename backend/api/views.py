@@ -408,6 +408,8 @@ def resource_pdf_stream(request, class_slug, subject_slug, resource_slug):
         filename = f"{resource.slug}.pdf"
         response['Content-Disposition'] = f'inline; filename="{filename}"'
         response['X-Content-Type-Options'] = 'nosniff'
+        response['Cache-Control'] = 'private, no-cache, no-store, must-revalidate'
+        response['Pragma'] = 'no-cache'
         return response
     except Exception as exc:
         logger.error(f"Error streaming PDF for {resource}: {exc}")

@@ -157,131 +157,83 @@ export default async function HomePage() {
           </div>
         </section>
 
-        {/* How The Platform Works (IXL-Style Structured Academic Guidance) */}
-        <section className="section-block">
-          <div className="section-header">
-            <h2 className="section-title">How To Use This Platform</h2>
-            <p className="section-subtitle">
-              A straightforward, distraction-free workflow designed for matriculation exam success.
-            </p>
-          </div>
-
-          <div className="grid-2" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}>
-            <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              <div style={{ width: '40px', height: '40px', borderRadius: '8px', background: 'var(--bg-accent-subtle)', color: 'var(--brand-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '800', fontSize: '1.2rem', border: '1px solid var(--border-brand)' }}>
-                1
-              </div>
-              <h3 className="card-title" style={{ margin: 0, fontSize: '1.15rem' }}>Select Your Class &amp; Subject</h3>
-              <p className="card-desc">
-                Navigate directly to Class 9 or Class 10 to view the official FBISE curriculum outline, core subjects, and syllabus structure.
-              </p>
+        {/* Interactive Learning & Practice Highlight (Clean, Concise Callout) */}
+        <section style={{
+          marginTop: '2.5rem',
+          padding: '2rem',
+          borderRadius: '16px',
+          background: 'linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%)',
+          border: '1px solid #a7f3d0',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '1.5rem',
+          boxShadow: '0 2px 4px rgba(4, 120, 87, 0.05)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', flex: '1 1 320px' }}>
+            <div style={{
+              fontSize: '2.25rem',
+              background: '#ffffff',
+              borderRadius: '14px',
+              width: '60px',
+              height: '60px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxShadow: '0 2px 4px rgba(0,0,0,0.04)',
+              border: '1px solid #d1fae5',
+              flexShrink: 0,
+            }}>
+              🎯
             </div>
-
-            <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              <div style={{ width: '40px', height: '40px', borderRadius: '8px', background: 'var(--bg-accent-subtle)', color: 'var(--brand-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '800', fontSize: '1.2rem', border: '1px solid var(--border-brand)' }}>
-                2
-              </div>
-              <h3 className="card-title" style={{ margin: 0, fontSize: '1.15rem' }}>Read Notes Online For Free</h3>
-              <p className="card-desc">
-                Access chapter summaries, key definitions, formulas, and solved review exercises directly in your browser without any registration.
-              </p>
-            </div>
-
-            <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              <div style={{ width: '40px', height: '40px', borderRadius: '8px', background: 'var(--bg-accent-subtle)', color: 'var(--brand-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '800', fontSize: '1.2rem', border: '1px solid var(--border-brand)' }}>
-                3
-              </div>
-              <h3 className="card-title" style={{ margin: 0, fontSize: '1.15rem' }}>Offline PDF Revision Packets</h3>
-              <p className="card-desc">
-                Students can optionally unlock complete, high-resolution offline PDF study guides for comprehensive revision on any phone or laptop.
-              </p>
-            </div>
-          </div>
-        </section>
-
-        {/* Recently Published Study Resources */}
-        <section className="section-block">
-          <div className="section-header-flex">
             <div>
-              <h2 className="section-title">Published Study Resources</h2>
-              <p className="section-subtitle">
-                Complete subject study notes and solved Federal Board model papers.
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                <span style={{
+                  background: '#047857',
+                  color: '#ffffff',
+                  fontSize: '0.6875rem',
+                  fontWeight: 800,
+                  textTransform: 'uppercase',
+                  padding: '0.125rem 0.5rem',
+                  borderRadius: '9999px',
+                }}>
+                  Interactive Practice
+                </span>
+                <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#047857' }}>
+                  Federal Board Exam Prep
+                </span>
+              </div>
+              <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#064e3b', margin: '0 0 0.25rem 0' }}>
+                Master Concepts with Chapter-Wise Practice
+              </h3>
+              <p style={{ fontSize: '0.875rem', color: '#065f46', margin: 0, maxWidth: '560px' }}>
+                Solve interactive MCQs, fill-in-the-blanks, and numerical questions with immediate answers and step-by-step explanations.
               </p>
             </div>
-            <Link href="/search/" className="view-all-link" title="Search all resources">
-              Browse All Resources →
-            </Link>
           </div>
 
-          {recentResources.length === 0 ? (
-            <div className="card text-center" style={{ padding: '3rem 2rem' }}>
-              <p className="card-title" style={{ marginBottom: '0.5rem' }}>No resources published yet</p>
-              <p className="card-desc">
-                Curriculum assets are being verified by our academic panel. Please check back shortly.
-              </p>
-            </div>
-          ) : (
-            <div className="resources-grid">
-              {recentResources.map((res) => (
-                <article key={res.id} className="resource-card">
-                  <div className="resource-card-meta">
-                    <span className="resource-badge badge-class">{res.class_name}</span>
-                    <span className="resource-badge badge-type">{res.resource_type_display}</span>
-                  </div>
-
-                  <h3 className="resource-title">
-                    <Link
-                      href={res.url || `/${res.class_slug}/${res.subject_slug}/${res.slug}/`}
-                      className="resource-title-link"
-                    >
-                      {res.title}
-                    </Link>
-                  </h3>
-
-                  <p className="resource-desc">{res.description}</p>
-
-                  <div className="resource-footer">
-                    <div className="resource-details">
-                      <span className="detail-item">
-                        <span className="detail-icon" aria-hidden="true">📄</span>
-                        {res.file_format} Format
-                      </span>
-                      {res.page_count > 0 && (
-                        <span className="detail-item">
-                          <span className="detail-icon" aria-hidden="true">📑</span>
-                          {res.page_count} Pages
-                        </span>
-                      )}
-                    </div>
-                    <Link
-                      href={res.url || `/${res.class_slug}/${res.subject_slug}/${res.slug}/`}
-                      className="btn-outline-sm"
-                      title={`Read notes for ${res.title}`}
-                    >
-                      View Notes →
-                    </Link>
-                  </div>
-                </article>
-              ))}
-            </div>
-          )}
-        </section>
-
-        {/* Educational Standards & SLO Alignment */}
-        <section className="standards-banner">
-          <span className="standards-tag">FBISE Academic Quality Standard</span>
-          <h2 className="standards-title">Student Learning Outcomes (SLO) Curriculum</h2>
-          <p className="standards-desc">
-            All notes and model questions on this platform adhere to the National Curriculum
-            framework and Federal Board assessment policies. Materials prioritize conceptual
-            comprehension, analytical deduction, and solved textbook exercises.
-          </p>
-          <div className="standards-links">
-            <Link href="/about/" className="standards-link">
-              Learn About Our Standards →
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <Link
+              href="/class-9/"
+              className="btn-primary"
+              style={{ padding: '0.625rem 1.25rem', borderRadius: '8px' }}
+            >
+              Class 9 Practice →
             </Link>
-            <Link href="/disclaimer/" className="standards-link">
-              Curriculum Attribution &amp; Disclaimer →
+            <Link
+              href="/class-10/"
+              className="btn-outline-sm"
+              style={{
+                padding: '0.625rem 1.25rem',
+                borderRadius: '8px',
+                background: '#ffffff',
+                borderColor: '#10b981',
+                color: '#047857',
+                fontWeight: 700,
+              }}
+            >
+              Class 10 Practice →
             </Link>
           </div>
         </section>

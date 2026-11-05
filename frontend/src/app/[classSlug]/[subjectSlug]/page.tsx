@@ -65,102 +65,43 @@ export default async function SubjectPage({ params }: PageProps) {
         <p className="page-subtitle">{subject.description}</p>
       </header>
 
-      {/* Syllabus & Exam Pattern Overview */}
-      {subject.syllabus_overview && (
-        <section className="info-callout-card">
-          <div className="callout-icon" aria-hidden="true">📖</div>
-          <div className="callout-body">
-            <h2 className="callout-title">Federal Board Syllabus &amp; SLO Alignment</h2>
-            <p className="callout-text">{subject.syllabus_overview}</p>
-            {subject.total_chapters > 0 && (
-              <p className="callout-meta">
-                Curriculum Structure: <strong>{subject.total_chapters} Total Chapters / Units</strong>
-              </p>
-            )}
-          </div>
-        </section>
-      )}
-
-      {/* Interactive Practice Callout Card */}
+      {/* Sleek Practice & Syllabus Action Bar */}
       <section style={{
-        margin: '1.5rem 0 2rem 0',
-        padding: '1.5rem',
-        borderRadius: '16px',
+        margin: '1.25rem 0 1.75rem 0',
+        padding: '1.25rem 1.5rem',
+        borderRadius: '12px',
         background: 'linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%)',
         border: '1px solid #a7f3d0',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
         flexWrap: 'wrap',
-        gap: '1.25rem',
-        boxShadow: '0 2px 4px rgba(4, 120, 87, 0.05)',
+        gap: '1rem',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flex: '1 1 300px' }}>
-          <div style={{
-            fontSize: '2rem',
-            background: '#ffffff',
-            borderRadius: '12px',
-            width: '54px',
-            height: '54px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            boxShadow: '0 2px 4px rgba(0,0,0,0.04)',
-            border: '1px solid #d1fae5',
-            flexShrink: 0,
-          }}>
-            🎯
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.2rem' }}>
+            <span style={{ background: '#047857', color: '#ffffff', fontSize: '0.6875rem', fontWeight: 800, textTransform: 'uppercase', padding: '0.1rem 0.45rem', borderRadius: '4px' }}>
+              Interactive Practice
+            </span>
+            <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#047857' }}>
+              {subject.total_chapters > 0 ? `${subject.total_chapters} Chapters • ` : ''}Instant Solutions
+            </span>
           </div>
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
-              <span style={{
-                background: '#047857',
-                color: '#ffffff',
-                fontSize: '0.6875rem',
-                fontWeight: 700,
-                textTransform: 'uppercase',
-                padding: '0.125rem 0.5rem',
-                borderRadius: '9999px',
-                letterSpacing: '0.05em',
-              }}>
-                Interactive Learning
-              </span>
-              <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#047857' }}>
-                Instant Correctness &amp; Step-by-Step Solutions
-              </span>
-            </div>
-            <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#064e3b', margin: '0 0 0.25rem 0' }}>
-              Practice {subject.name} Questions by Chapter
-            </h3>
-            <p style={{ fontSize: '0.875rem', color: '#065f46', margin: 0 }}>
-              Master FBISE SLO concepts through interactive MCQs, fill-in-the-blanks, and numerical problems.
-            </p>
-          </div>
+          <h2 style={{ fontSize: '1.15rem', fontWeight: 800, color: '#064e3b', margin: '0 0 0.15rem 0' }}>
+            Practice {subject.name} Questions by Chapter
+          </h2>
+          <p style={{ fontSize: '0.875rem', color: '#065f46', margin: 0, maxWidth: '620px' }}>
+            {subject.syllabus_overview || `Self-test key concepts, solved numericals, and review questions for ${cls.name} ${subject.name}.`}
+          </p>
         </div>
 
-        <div>
-          <Link
-            href={`/${cls.slug}/${subject.slug}/practice/`}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              background: '#047857',
-              color: '#ffffff',
-              fontWeight: 700,
-              fontSize: '0.9375rem',
-              padding: '0.75rem 1.5rem',
-              borderRadius: '10px',
-              textDecoration: 'none',
-              boxShadow: '0 4px 6px -1px rgba(4, 120, 87, 0.2)',
-              transition: 'all 0.15s ease',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            <span>Practice Chapter Skills</span>
-            <span aria-hidden="true">→</span>
-          </Link>
-        </div>
+        <Link
+          href={`/${cls.slug}/${subject.slug}/practice/`}
+          className="btn-primary"
+          style={{ padding: '0.625rem 1.25rem', borderRadius: '8px', fontSize: '0.875rem' }}
+        >
+          Start Chapter Practice 🎯
+        </Link>
       </section>
 
       {/* Available Study Resources List */}
