@@ -1500,6 +1500,7 @@ def admin_structure_overview(request):
                 {"id": ch.id, "number": ch.chapter_number, "title": ch.title, "slug": ch.slug}
                 for ch in cs.chapters.all()
             ]
+            published_resources_count = cs.resources.filter(is_published=True).count()
             cs_list.append({
                 "id": cs.id,
                 "subject_id": cs.subject.id,
@@ -1509,6 +1510,7 @@ def admin_structure_overview(request):
                 "syllabus_overview": cs.syllabus_overview,
                 "is_active": cs.is_active,
                 "chapters": chapters,
+                "resources_count": published_resources_count,
             })
         classes_data.append({
             "id": cls.id,
@@ -1563,6 +1565,15 @@ def admin_create_subject(request):
         icon_name=icon_name,
         description=description,
     )
+
+    class_ids = data.get('class_ids', [])
+    if class_ids:
+        for cid in class_ids:
+            try:
+                cl = ClassLevel.objects.get(id=cid)
+                ClassSubject.objects.get_or_create(class_level=cl, subject=subject)
+            except ClassLevel.DoesNotExist:
+                pass
 
     return JsonResponse({
         "success": True,

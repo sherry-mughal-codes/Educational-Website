@@ -385,6 +385,7 @@ export async function adminCreateSubject(payload: {
   code?: string;
   icon_name?: string;
   description?: string;
+  class_ids?: number[];
 }): Promise<{ success: boolean; id?: number; error?: string }> {
   const res = await fetch(`${API_BASE}/api/admin/structure/subjects/`, {
     method: 'POST',

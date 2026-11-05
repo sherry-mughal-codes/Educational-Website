@@ -28,6 +28,7 @@ export default function AdminStructurePage() {
       total_chapters: number;
       syllabus_overview?: string;
       chapters: ChapterItem[];
+      resources_count?: number;
     }>;
   }>>([]);
   const [subjects, setSubjects] = useState<Array<{ id: number; name: string; slug: string; code: string; icon_name: string }>>([]);
@@ -50,6 +51,7 @@ export default function AdminStructurePage() {
   const [subjectSlug, setSubjectSlug] = useState('');
   const [subjectIcon, setSubjectIcon] = useState('book');
   const [subjectDesc, setSubjectDesc] = useState('');
+  const [selectedClassIds, setSelectedClassIds] = useState<number[]>([]);
   const [isSubmittingSubject, setIsSubmittingSubject] = useState(false);
 
   // Check auth
@@ -152,6 +154,7 @@ export default function AdminStructurePage() {
         code: subjectCode.trim(),
         icon_name: subjectIcon.trim(),
         description: subjectDesc.trim(),
+        class_ids: selectedClassIds,
       });
 
       if (result.success) {
@@ -185,7 +188,10 @@ export default function AdminStructurePage() {
           <div className="admin-actions-group">
             <button
               type="button"
-              onClick={() => setShowSubjectModal(true)}
+              onClick={() => {
+                setSelectedClassIds(classes.map((c) => c.id));
+                setShowSubjectModal(true);
+              }}
               className="btn-primary"
               title="Create a new academic subject in the catalog"
             >
@@ -243,10 +249,44 @@ export default function AdminStructurePage() {
                 <div className="structure-subjects-grid">
                   {cls.class_subjects.map((cs) => (
                     <div key={cs.id} className="structure-subject-card">
-                      <div className="subject-card-top">
-                        <h2 className="subject-card-title">{cs.subject_name}</h2>
+                      <div className="subject-card-top" style={{ alignItems: 'flex-start' }}>
+                        <div>
+                          <h2 className="subject-card-title">{cs.subject_name}</h2>
+                          <div style={{ marginTop: '0.35rem' }}>
+                            {(cs.resources_count || 0) > 0 ? (
+                              <span style={{
+                                fontSize: '0.75rem',
+                                fontWeight: 700,
+                                color: '#047857',
+                                background: '#d1fae5',
+                                padding: '0.15rem 0.55rem',
+                                borderRadius: '9999px',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '0.3rem',
+                              }}>
+                                🟢 {(cs.resources_count || 0)} Live on Student Screen
+                              </span>
+                            ) : (
+                              <span style={{
+                                fontSize: '0.75rem',
+                                fontWeight: 600,
+                                color: '#64748b',
+                                background: '#f1f5f9',
+                                border: '1px solid #e2e8f0',
+                                padding: '0.15rem 0.55rem',
+                                borderRadius: '9999px',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '0.3rem',
+                              }}>
+                                ⚪ No Notes Yet (Hidden from Students)
+                              </span>
+                            )}
+                          </div>
+                        </div>
                         <span className="subject-chapter-count">
-                          {cs.chapters.length > 0 ? `${cs.chapters.length} Chapters` : 'Curriculum Pack'}
+                          {cs.chapters.length > 0 ? `${cs.chapters.length} Chapters` : '0 Chapters'}
                         </span>
                       </div>
 
@@ -261,20 +301,36 @@ export default function AdminStructurePage() {
                           ))
                         ) : (
                           <p className="no-chapters-hint">
-                            No discrete chapters configured yet. Study notes apply to the entire subject syllabus.
+                            No discrete chapters configured yet. Click below to add Chapter 1.
                           </p>
                         )}
                       </div>
 
-                      <div className="subject-card-footer">
+                      <div className="subject-card-footer" style={{ display: 'flex', gap: '0.5rem' }}>
                         <button
                           type="button"
                           onClick={() => openAddChapterModal(cs.id, cls.name, cs.subject_name, cs.chapters.length)}
-                          className="btn-outline-sm w-full"
+                          className="btn-outline-sm"
+                          style={{ flex: 1, padding: '0.45rem 0.6rem' }}
                           title={`Add chapter to ${cls.name} ${cs.subject_name}`}
                         >
                           + Add Chapter
                         </button>
+                        <Link
+                          href="/admin/resources/new/"
+                          className="btn-primary-sm"
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            textDecoration: 'none',
+                            padding: '0.45rem 0.75rem',
+                            fontSize: '0.8125rem',
+                          }}
+                          title={`Upload notes for ${cls.name} ${cs.subject_name}`}
+                        >
+                          + Upload Notes
+                        </Link>
                       </div>
                     </div>
                   ))}
@@ -445,6 +501,30 @@ export default function AdminStructurePage() {
                   placeholder="Curriculum focus and board guidelines..."
                   className="form-textarea"
                 />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">
+                  Assign to Class Levels:
+                </label>
+                <div style={{ display: 'flex', gap: '1.25rem', flexWrap: 'wrap', marginTop: '0.25rem' }}>
+                  {classes.map((c) => (
+                    <label key={c.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.375rem', fontSize: '0.875rem', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedClassIds.includes(c.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedClassIds([...selectedClassIds, c.id]);
+                          } else {
+                            setSelectedClassIds(selectedClassIds.filter((id) => id !== c.id));
+                          }
+                        }}
+                      />
+                      <span>{c.name}</span>
+                    </label>
+                  ))}
+                </div>
               </div>
 
               <div className="modal-actions">
