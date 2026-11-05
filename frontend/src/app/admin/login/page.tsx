@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { adminLogin } from '@/lib/api';
 
@@ -36,13 +37,13 @@ export default function AdminLoginPage() {
   };
 
   return (
-    <div className="admin-login-layout">
-      <div className="admin-login-card">
-        <div className="admin-login-header">
-          <div className="admin-login-icon" aria-hidden="true">🔐</div>
-          <h1 className="admin-login-title">Administrator Sign-In</h1>
-          <p className="admin-login-subtitle">
-            Secure content-management portal for FBISE educational resources.
+    <div className="container student-auth-layout">
+      <div className="student-auth-card">
+        <div className="student-auth-header">
+          <span className="student-auth-badge">Staff Console</span>
+          <h1 className="student-auth-title">Administrator Sign-In</h1>
+          <p className="student-auth-subtitle">
+            Secure content-management and academic publishing portal for FBISE.
           </p>
         </div>
 
@@ -53,10 +54,10 @@ export default function AdminLoginPage() {
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="admin-login-form">
+        <form onSubmit={handleSubmit} className="student-auth-form">
           <div className="form-group">
             <label htmlFor="admin-username" className="form-label">
-              Admin Username
+              Admin Username <span className="req">*</span>
             </label>
             <input
               id="admin-username"
@@ -73,7 +74,7 @@ export default function AdminLoginPage() {
 
           <div className="form-group">
             <label htmlFor="admin-password" className="form-label">
-              Password
+              Password <span className="req">*</span>
             </label>
             <input
               id="admin-password"
@@ -97,9 +98,12 @@ export default function AdminLoginPage() {
           </button>
         </form>
 
-        <div className="admin-login-footer">
-          <p className="admin-security-note">
-            Enforced by Django RBAC. Only staff and superusers can access administrative endpoints.
+        <div className="student-auth-footer">
+          <p>
+            Authorized academic personnel only.{' '}
+            <Link href="/" className="inline-link">
+              Return to Public Site
+            </Link>
           </p>
         </div>
       </div>

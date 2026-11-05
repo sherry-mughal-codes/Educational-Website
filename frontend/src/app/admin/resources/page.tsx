@@ -413,22 +413,94 @@ export default function AdminResourcesPage() {
       {/* Delete Confirmation Modal */}
       {resourceToDelete && (
         <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-          <div className="modal-box">
-            <h3 id="modal-title" className="modal-title">
-              Delete Educational Resource?
-            </h3>
-            <p className="modal-text">
-              Are you sure you want to delete <strong>{resourceToDelete.title}</strong>?
-            </p>
-            <p className="modal-warning">
-              This action permanently removes the resource record and cleans up the associated storage file.
-            </p>
+          <div className="modal-box modal-box-danger">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.25rem' }}>
+              <div style={{
+                width: '52px',
+                height: '52px',
+                borderRadius: '14px',
+                background: '#fef2f2',
+                border: '1.5px solid #fee2e2',
+                color: '#dc2626',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '1.65rem',
+                flexShrink: 0,
+              }}>
+                ⚠️
+              </div>
+              <div>
+                <h3 id="modal-title" className="modal-title" style={{ margin: 0 }}>
+                  Delete Educational Resource?
+                </h3>
+                <span style={{ fontSize: '0.8125rem', color: '#991b1b', fontWeight: 600 }}>
+                  Irreversible Administrative Action
+                </span>
+              </div>
+            </div>
+
+            <div className="modal-detail-box" style={{ borderLeft: '4px solid #ef4444' }}>
+              <div style={{ fontSize: '1rem', fontWeight: 700, color: '#0f172a', marginBottom: '0.5rem', lineHeight: 1.4 }}>
+                {resourceToDelete.title}
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
+                {resourceToDelete.class_name && (
+                  <span style={{
+                    fontSize: '0.75rem',
+                    fontWeight: 700,
+                    background: '#e0e7ff',
+                    color: '#3730a3',
+                    border: '1px solid #c7d2fe',
+                    padding: '0.15rem 0.5rem',
+                    borderRadius: '4px',
+                  }}>
+                    {resourceToDelete.class_name}
+                  </span>
+                )}
+                {resourceToDelete.subject_name && (
+                  <span style={{
+                    fontSize: '0.75rem',
+                    fontWeight: 700,
+                    background: '#f1f5f9',
+                    color: '#475569',
+                    border: '1px solid #cbd5e1',
+                    padding: '0.15rem 0.5rem',
+                    borderRadius: '4px',
+                  }}>
+                    {resourceToDelete.subject_name}
+                  </span>
+                )}
+                <span style={{
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  background: '#ffffff',
+                  color: '#4b5563',
+                  border: '1px solid #e2e8f0',
+                  padding: '0.15rem 0.5rem',
+                  borderRadius: '4px',
+                }}>
+                  {resourceToDelete.resource_type_display || resourceToDelete.file_format || 'PDF'}
+                </span>
+                {resourceToDelete.page_count > 0 && (
+                  <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                    • {resourceToDelete.page_count} Pages
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="modal-warning-alert">
+              <strong>Notice:</strong> This action permanently removes the resource record and wipes the associated PDF file from storage. Any students who purchased this resource will no longer be able to download the file.
+            </div>
+
             <div className="modal-actions">
               <button
                 type="button"
                 onClick={() => setResourceToDelete(null)}
                 className="btn-outline-sm"
                 disabled={isDeleting}
+                style={{ padding: '0.625rem 1.25rem', borderRadius: '8px' }}
               >
                 Cancel
               </button>
@@ -437,8 +509,16 @@ export default function AdminResourcesPage() {
                 onClick={handleConfirmDelete}
                 className="btn-danger"
                 disabled={isDeleting}
+                style={{
+                  padding: '0.625rem 1.35rem',
+                  borderRadius: '8px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.375rem',
+                  boxShadow: '0 2px 4px rgba(220, 38, 38, 0.25)',
+                }}
               >
-                {isDeleting ? 'Deleting...' : 'Confirm Delete'}
+                {isDeleting ? 'Deleting...' : '🗑️ Confirm & Delete'}
               </button>
             </div>
           </div>

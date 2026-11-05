@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import AdminNav from '@/components/AdminNav';
 import {
   adminGetPracticeOverview,
@@ -41,6 +41,13 @@ export default function AdminPracticePage() {
   const [importJsonText, setImportJsonText] = useState<string>('');
   const [importing, setImporting] = useState<boolean>(false);
   const [importResult, setImportResult] = useState<string | null>(null);
+
+  // Custom styled delete confirmation states
+  const [topicToDelete, setTopicToDelete] = useState<any | null>(null);
+  const [isDeletingTopic, setIsDeletingTopic] = useState<boolean>(false);
+
+  const [questionToDelete, setQuestionToDelete] = useState<any | null>(null);
+  const [isDeletingQuestion, setIsDeletingQuestion] = useState<boolean>(false);
 
   // Load overview hierarchy
   const loadOverview = useCallback(async () => {
@@ -100,33 +107,126 @@ export default function AdminPracticePage() {
     loadQuestions();
   }, [loadQuestions]);
 
-  // Get active entities from tree
+  // Active entities
   const activeClass = classesData.find((c) => c.id === selectedClassId);
   const activeSubject = activeClass?.subjects?.find((s: any) => s.id === selectedSubjectId);
   const activeChapter = activeSubject?.chapters?.find((ch: any) => ch.id === selectedChapterId);
   const activeTopic = activeChapter?.topics?.find((tp: any) => tp.id === selectedTopicId);
 
-  // Handle Delete Topic
-  const handleDeleteTopic = async (topicId: number) => {
-    if (!confirm('Are you sure you want to delete this practice topic and all its questions?')) return;
-    const res = await adminDeletePracticeTopic(topicId);
-    if (res.success) {
-      await loadOverview();
-      if (selectedTopicId === topicId) setSelectedTopicId(null);
-    } else {
-      alert(res.error || 'Failed to delete topic');
+  // Flattened lists for modal dropdowns
+  const allChaptersList = useMemo(() => {
+    const list: Array<{ id: number; label: string; classId: number; subjectId: number }> = [];
+    classesData.forEach((cl) => {
+      cl.subjects?.forEach((sub: any) => {
+        sub.chapters?.forEach((ch: any) => {
+          list.push({
+            id: ch.id,
+            label: `${cl.name} → ${sub.name} → Ch ${ch.chapter_number}: ${ch.title}`,
+            classId: cl.id,
+            subjectId: sub.id,
+          });
+        });
+      });
+    });
+    return list;
+  }, [classesData]);
+
+  const allTopicsList = useMemo(() => {
+    const list: Array<{ id: number; label: string; chapterId: number }> = [];
+    classesData.forEach((cl) => {
+      cl.subjects?.forEach((sub: any) => {
+        sub.chapters?.forEach((ch: any) => {
+          ch.topics?.forEach((tp: any) => {
+            list.push({
+              id: tp.id,
+              label: `${cl.name} • ${sub.name} • Ch ${ch.chapter_number} → ${tp.title}`,
+              chapterId: ch.id,
+            });
+          });
+        });
+      });
+    });
+    return list;
+  }, [classesData]);
+
+  // Open Topic Modal Helper
+  const openAddTopicModal = () => {
+    const defaultChapterId = selectedChapterId || (allChaptersList.length > 0 ? allChaptersList[0].id : 1);
+    setCurrentTopic({
+      chapter_id: defaultChapterId,
+      title: '',
+      description: '',
+      difficulty: 'intermediate',
+      order: (activeChapter?.topics?.length || 0) + 1,
+      is_published: true,
+    });
+    setTopicModalMode('create');
+    setShowTopicModal(true);
+  };
+
+  // Open Question Modal Helper
+  const openAddQuestionModal = () => {
+    const defaultTopicId = selectedTopicId || (allTopicsList.length > 0 ? allTopicsList[0].id : 1);
+    setCurrentQuestion({
+      topic_id: defaultTopicId,
+      question_type: 'mcq',
+      prompt: '',
+      explanation: '',
+      points: 10,
+      difficulty: 'intermediate',
+      order: questions.length + 1,
+      is_published: true,
+      options: [
+        { option_text: '', is_correct: true, order: 1 },
+        { option_text: '', is_correct: false, order: 2 },
+        { option_text: '', is_correct: false, order: 3 },
+        { option_text: '', is_correct: false, order: 4 },
+      ],
+      accepted_answers: [{ accepted_text: '', is_case_sensitive: false }],
+    });
+    setQuestionModalMode('create');
+    setShowQuestionModal(true);
+  };
+
+  // Delete Topic Confirmation
+  const handleConfirmDeleteTopic = async () => {
+    if (!topicToDelete) return;
+    setIsDeletingTopic(true);
+    try {
+      const res = await adminDeletePracticeTopic(topicToDelete.id);
+      if (res.success) {
+        if (selectedTopicId === topicToDelete.id) {
+          setSelectedTopicId(null);
+        }
+        setTopicToDelete(null);
+        await loadOverview();
+      } else {
+        alert(res.error || 'Failed to delete topic');
+      }
+    } catch (err: any) {
+      alert(err.message || 'Error deleting topic');
+    } finally {
+      setIsDeletingTopic(false);
     }
   };
 
-  // Handle Delete Question
-  const handleDeleteQuestion = async (qId: number) => {
-    if (!confirm('Are you sure you want to delete this question?')) return;
-    const res = await adminDeletePracticeQuestion(qId);
-    if (res.success) {
-      await loadQuestions();
-      await loadOverview();
-    } else {
-      alert(res.error || 'Failed to delete question');
+  // Delete Question Confirmation
+  const handleConfirmDeleteQuestion = async () => {
+    if (!questionToDelete) return;
+    setIsDeletingQuestion(true);
+    try {
+      const res = await adminDeletePracticeQuestion(questionToDelete.id);
+      if (res.success) {
+        setQuestionToDelete(null);
+        await loadQuestions();
+        await loadOverview();
+      } else {
+        alert(res.error || 'Failed to delete question');
+      }
+    } catch (err: any) {
+      alert(err.message || 'Error deleting question');
+    } finally {
+      setIsDeletingQuestion(false);
     }
   };
 
@@ -167,7 +267,7 @@ export default function AdminPracticePage() {
       <AdminNav />
 
       <div className="container" style={{ maxWidth: '1240px', margin: '2rem auto', padding: '0 1rem' }}>
-        {/* Header Bar */}
+        {/* Top Header Bar */}
         <div style={{
           display: 'flex',
           alignItems: 'center',
@@ -175,21 +275,28 @@ export default function AdminPracticePage() {
           flexWrap: 'wrap',
           gap: '1rem',
           marginBottom: '2rem',
+          background: '#ffffff',
+          padding: '1.5rem',
+          borderRadius: '16px',
+          border: '1px solid #e2e8f0',
+          boxShadow: '0 1px 3px rgba(0, 0, 0, 0.04)',
         }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
-              <span style={{ fontSize: '1.25rem' }}>🎯</span>
-              <h1 style={{ fontSize: '1.75rem', fontWeight: 800, color: '#0f172a', margin: 0 }}>
-                Interactive Practice &amp; Question Bank
+              <span style={{ fontSize: '1.5rem' }}>🎯</span>
+              <h1 style={{ fontSize: '1.65rem', fontWeight: 800, color: '#0f172a', margin: 0, letterSpacing: '-0.02em' }}>
+                Practice &amp; Question Bank Console
               </h1>
             </div>
-            <p style={{ color: '#64748b', fontSize: '0.9375rem', margin: 0 }}>
-              Author, edit, and organize FBISE chapter-based practice topics, MCQs, fill-in-the-blanks, and numerical exercises.
+            <p style={{ color: '#64748b', fontSize: '0.92rem', margin: 0 }}>
+              Manage FBISE chapter practice skills, author interactive MCQs, fill-in-the-blanks, and numerical exercises.
             </p>
           </div>
 
-          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+          {/* Primary Action Buttons (ALWAYS VISIBLE) */}
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
             <button
+              type="button"
               onClick={() => {
                 setImportResult(null);
                 setShowImportModal(true);
@@ -197,78 +304,64 @@ export default function AdminPracticePage() {
               style={{
                 background: '#ffffff',
                 color: '#334155',
-                border: '1px solid #cbd5e1',
+                border: '1.5px solid #cbd5e1',
                 padding: '0.625rem 1rem',
                 borderRadius: '8px',
                 fontWeight: 600,
                 fontSize: '0.875rem',
                 cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.35rem',
               }}
             >
-              📁 Bulk Import (JSON/CSV)
+              <span>📁</span>
+              <span>Bulk Import (JSON/CSV)</span>
             </button>
 
-            {selectedChapterId && (
-              <button
-                onClick={() => {
-                  setCurrentTopic({ chapter_id: selectedChapterId, title: '', difficulty: 'intermediate', order: 1, is_published: true });
-                  setTopicModalMode('create');
-                  setShowTopicModal(true);
-                }}
-                style={{
-                  background: '#047857',
-                  color: '#ffffff',
-                  border: 'none',
-                  padding: '0.625rem 1.25rem',
-                  borderRadius: '8px',
-                  fontWeight: 600,
-                  fontSize: '0.875rem',
-                  cursor: 'pointer',
-                  boxShadow: '0 2px 4px rgba(4, 120, 87, 0.2)',
-                }}
-              >
-                + Add Practice Topic
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={openAddTopicModal}
+              style={{
+                background: '#047857',
+                color: '#ffffff',
+                border: '1px solid #065f46',
+                padding: '0.625rem 1.25rem',
+                borderRadius: '8px',
+                fontWeight: 700,
+                fontSize: '0.875rem',
+                cursor: 'pointer',
+                boxShadow: '0 2px 4px rgba(4, 120, 87, 0.2)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.35rem',
+              }}
+            >
+              <span>+</span>
+              <span>Add Practice Topic</span>
+            </button>
 
-            {selectedTopicId && (
-              <button
-                onClick={() => {
-                  setCurrentQuestion({
-                    topic_id: selectedTopicId,
-                    question_type: 'mcq',
-                    prompt: '',
-                    explanation: '',
-                    points: 10,
-                    difficulty: 'intermediate',
-                    order: questions.length + 1,
-                    is_published: true,
-                    options: [
-                      { option_text: '', is_correct: true, order: 1 },
-                      { option_text: '', is_correct: false, order: 2 },
-                      { option_text: '', is_correct: false, order: 3 },
-                      { option_text: '', is_correct: false, order: 4 },
-                    ],
-                    accepted_answers: [{ accepted_text: '', is_case_sensitive: false }],
-                  });
-                  setQuestionModalMode('create');
-                  setShowQuestionModal(true);
-                }}
-                style={{
-                  background: '#0284c7',
-                  color: '#ffffff',
-                  border: 'none',
-                  padding: '0.625rem 1.25rem',
-                  borderRadius: '8px',
-                  fontWeight: 600,
-                  fontSize: '0.875rem',
-                  cursor: 'pointer',
-                  boxShadow: '0 2px 4px rgba(2, 132, 199, 0.2)',
-                }}
-              >
-                + Add Question
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={openAddQuestionModal}
+              style={{
+                background: '#0284c7',
+                color: '#ffffff',
+                border: '1px solid #0369a1',
+                padding: '0.625rem 1.25rem',
+                borderRadius: '8px',
+                fontWeight: 700,
+                fontSize: '0.875rem',
+                cursor: 'pointer',
+                boxShadow: '0 2px 4px rgba(2, 132, 199, 0.2)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.35rem',
+              }}
+            >
+              <span>+</span>
+              <span>Add Question</span>
+            </button>
           </div>
         </div>
 
@@ -314,7 +407,7 @@ export default function AdminPracticePage() {
                 width: '100%',
                 padding: '0.625rem',
                 borderRadius: '8px',
-                border: '1px solid #cbd5e1',
+                border: '1.5px solid #cbd5e1',
                 fontWeight: 600,
                 color: '#1e293b',
               }}
@@ -351,7 +444,7 @@ export default function AdminPracticePage() {
                 width: '100%',
                 padding: '0.625rem',
                 borderRadius: '8px',
-                border: '1px solid #cbd5e1',
+                border: '1.5px solid #cbd5e1',
                 fontWeight: 600,
                 color: '#1e293b',
               }}
@@ -382,7 +475,7 @@ export default function AdminPracticePage() {
                 width: '100%',
                 padding: '0.625rem',
                 borderRadius: '8px',
-                border: '1px solid #cbd5e1',
+                border: '1.5px solid #cbd5e1',
                 fontWeight: 600,
                 color: '#1e293b',
               }}
@@ -396,32 +489,80 @@ export default function AdminPracticePage() {
           </div>
         </div>
 
-        {/* Main Content Layout: Topics Sidebar + Questions Area */}
-        <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: '1.5rem', alignItems: 'start' }}>
+        {/* Two-Column Management Layout: Topics Sidebar + Questions Area */}
+        <div style={{ display: 'grid', gridTemplateColumns: '340px 1fr', gap: '1.5rem', alignItems: 'start' }}>
           {/* Topics List Card */}
           <div style={{
             background: '#ffffff',
-            borderRadius: '14px',
-            border: '1px solid #e2e8f0',
+            borderRadius: '16px',
+            border: '1.5px solid #e2e8f0',
+            boxShadow: '0 2px 4px rgba(0,0,0,0.02)',
             overflow: 'hidden',
           }}>
+            {/* Topic Header with prominent + Add Topic button */}
             <div style={{
-              padding: '1rem 1.25rem',
-              borderBottom: '1px solid #e2e8f0',
+              padding: '1.125rem 1.25rem',
+              borderBottom: '1.5px solid #e2e8f0',
               background: '#f8fafc',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
+              gap: '0.5rem',
             }}>
-              <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#0f172a' }}>
-                Practice Topics ({activeChapter?.topics?.length || 0})
-              </span>
+              <div>
+                <span style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b' }}>
+                  Unit Skills
+                </span>
+                <div style={{ fontSize: '1rem', fontWeight: 700, color: '#0f172a' }}>
+                  Topics ({activeChapter?.topics?.length || 0})
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={openAddTopicModal}
+                style={{
+                  background: '#047857',
+                  color: '#ffffff',
+                  border: 'none',
+                  padding: '0.45rem 0.85rem',
+                  borderRadius: '6px',
+                  fontWeight: 700,
+                  fontSize: '0.75rem',
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.25rem',
+                }}
+              >
+                <span>+</span>
+                <span>Add Topic</span>
+              </button>
             </div>
 
-            <div style={{ maxHeight: '600px', overflowY: 'auto' }}>
+            <div style={{ maxHeight: '620px', overflowY: 'auto' }}>
               {!activeChapter || !activeChapter.topics || activeChapter.topics.length === 0 ? (
-                <div style={{ padding: '2rem 1rem', textAlign: 'center', color: '#94a3b8', fontSize: '0.875rem' }}>
-                  No practice topics in this chapter yet.
+                <div style={{ padding: '2.5rem 1.25rem', textAlign: 'center' }}>
+                  <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📚</div>
+                  <p style={{ color: '#64748b', fontSize: '0.875rem', margin: '0 0 1rem 0' }}>
+                    No topics created in this chapter yet.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={openAddTopicModal}
+                    style={{
+                      background: '#047857',
+                      color: '#ffffff',
+                      border: 'none',
+                      padding: '0.5rem 1rem',
+                      borderRadius: '6px',
+                      fontWeight: 600,
+                      fontSize: '0.8125rem',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    + Add First Topic
+                  </button>
                 </div>
               ) : (
                 activeChapter.topics.map((tp: any) => {
@@ -448,54 +589,62 @@ export default function AdminPracticePage() {
                           borderRadius: '4px',
                           background: tp.is_published ? '#ecfdf5' : '#fef2f2',
                           color: tp.is_published ? '#047857' : '#991b1b',
+                          border: `1px solid ${tp.is_published ? '#a7f3d0' : '#fecaca'}`,
                         }}>
                           {tp.is_published ? 'Published' : 'Draft'}
                         </span>
-                        <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                        <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: 600 }}>
                           {tp.question_count} Qs
                         </span>
                       </div>
 
-                      <div style={{ fontSize: '0.9375rem', fontWeight: 600, color: isSelected ? '#064e3b' : '#1e293b', marginBottom: '0.5rem' }}>
+                      <div style={{ fontSize: '0.9375rem', fontWeight: 600, color: isSelected ? '#064e3b' : '#1e293b', marginBottom: '0.5rem', lineHeight: 1.4 }}>
                         {tp.title}
                       </div>
 
-                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
                         <button
+                          type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            setCurrentTopic(tp);
+                            setCurrentTopic({
+                              ...tp,
+                              chapter_id: activeChapter?.id || tp.chapter_id,
+                            });
                             setTopicModalMode('edit');
                             setShowTopicModal(true);
                           }}
                           style={{
                             fontSize: '0.75rem',
                             color: '#047857',
-                            background: 'transparent',
-                            border: 'none',
-                            padding: 0,
+                            background: '#f0fdf4',
+                            border: '1px solid #bbf7d0',
+                            padding: '0.15rem 0.5rem',
+                            borderRadius: '4px',
                             cursor: 'pointer',
                             fontWeight: 600,
                           }}
                         >
-                          Edit
+                          ✏️ Edit
                         </button>
-                        <span style={{ color: '#cbd5e1' }}>•</span>
                         <button
+                          type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleDeleteTopic(tp.id);
+                            setTopicToDelete(tp);
                           }}
                           style={{
                             fontSize: '0.75rem',
                             color: '#be123c',
-                            background: 'transparent',
-                            border: 'none',
-                            padding: 0,
+                            background: '#fff1f2',
+                            border: '1px solid #fecdd3',
+                            padding: '0.15rem 0.5rem',
+                            borderRadius: '4px',
                             cursor: 'pointer',
+                            fontWeight: 600,
                           }}
                         >
-                          Delete
+                          🗑️ Delete
                         </button>
                       </div>
                     </div>
@@ -508,72 +657,105 @@ export default function AdminPracticePage() {
           {/* Questions Panel */}
           <div style={{
             background: '#ffffff',
-            borderRadius: '14px',
-            border: '1px solid #e2e8f0',
+            borderRadius: '16px',
+            border: '1.5px solid #e2e8f0',
+            boxShadow: '0 2px 4px rgba(0,0,0,0.02)',
             overflow: 'hidden',
           }}>
+            {/* Question Panel Header with prominent + Add Question button */}
             <div style={{
-              padding: '1.25rem 1.5rem',
-              borderBottom: '1px solid #e2e8f0',
+              padding: '1.125rem 1.5rem',
+              borderBottom: '1.5px solid #e2e8f0',
               background: '#f8fafc',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
               flexWrap: 'wrap',
-              gap: '0.5rem',
+              gap: '0.75rem',
             }}>
               <div>
                 <span style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#64748b' }}>
-                  {activeTopic ? `Topic: ${activeTopic.title}` : 'Select a topic'}
+                  {activeTopic ? `Active Topic: ${activeTopic.title}` : 'Select a topic on the left'}
                 </span>
-                <h2 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#0f172a', margin: '0.125rem 0 0 0' }}>
+                <h2 style={{ fontSize: '1.125rem', fontWeight: 800, color: '#0f172a', margin: '0.125rem 0 0 0' }}>
                   Questions ({questions.length})
                 </h2>
               </div>
+
+              <button
+                type="button"
+                onClick={openAddQuestionModal}
+                style={{
+                  background: '#0284c7',
+                  color: '#ffffff',
+                  border: '1px solid #0369a1',
+                  padding: '0.5rem 1.125rem',
+                  borderRadius: '8px',
+                  fontWeight: 700,
+                  fontSize: '0.8125rem',
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  boxShadow: '0 2px 4px rgba(2, 132, 199, 0.2)',
+                }}
+              >
+                <span>+</span>
+                <span>Add Question</span>
+              </button>
             </div>
 
             <div style={{ padding: '1.5rem' }}>
               {questionsLoading ? (
-                <div style={{ textAlign: 'center', padding: '3rem', color: '#64748b' }}>
-                  Loading questions...
+                <div style={{ textAlign: 'center', padding: '3.5rem', color: '#64748b' }}>
+                  <div style={{
+                    width: '36px',
+                    height: '36px',
+                    border: '3px solid #e2e8f0',
+                    borderTopColor: '#0284c7',
+                    borderRadius: '50%',
+                    animation: 'spin 0.8s linear infinite',
+                    margin: '0 auto 1rem auto',
+                  }} />
+                  <p style={{ margin: 0, fontWeight: 600 }}>Loading questions...</p>
                 </div>
               ) : questions.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '3rem 1rem', color: '#64748b' }}>
-                  <p style={{ margin: '0 0 1rem 0' }}>No questions authored in this topic yet.</p>
-                  {selectedTopicId && (
-                    <button
-                      onClick={() => {
-                        setCurrentQuestion({
-                          topic_id: selectedTopicId,
-                          question_type: 'mcq',
-                          prompt: '',
-                          explanation: '',
-                          points: 10,
-                          difficulty: 'intermediate',
-                          order: 1,
-                          is_published: true,
-                          options: [
-                            { option_text: '', is_correct: true, order: 1 },
-                            { option_text: '', is_correct: false, order: 2 },
-                          ],
-                          accepted_answers: [],
-                        });
-                        setQuestionModalMode('create');
-                        setShowQuestionModal(true);
-                      }}
-                      style={{
-                        background: '#047857',
-                        color: '#ffffff',
-                        border: 'none',
-                        padding: '0.5rem 1rem',
-                        borderRadius: '6px',
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      + Add First Question
-                    </button>
-                  )}
+                <div style={{
+                  textAlign: 'center',
+                  padding: '3.5rem 1.5rem',
+                  background: '#f8fafc',
+                  border: '1.5px dashed #cbd5e1',
+                  borderRadius: '12px',
+                }}>
+                  <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem' }}>❓</div>
+                  <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#334155', margin: '0 0 0.5rem 0' }}>
+                    {activeTopic ? 'No questions in this topic yet' : 'No topic selected'}
+                  </h3>
+                  <p style={{ color: '#64748b', fontSize: '0.875rem', margin: '0 auto 1.5rem auto', maxWidth: '420px', lineHeight: 1.5 }}>
+                    {activeTopic
+                      ? `Get started by authoring the first MCQ, True/False, or numerical question for "${activeTopic.title}".`
+                      : 'Choose a practice topic from the left panel or click below to create a new question directly.'}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={openAddQuestionModal}
+                    style={{
+                      background: '#0284c7',
+                      color: '#ffffff',
+                      border: 'none',
+                      padding: '0.625rem 1.25rem',
+                      borderRadius: '8px',
+                      fontWeight: 700,
+                      fontSize: '0.875rem',
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.35rem',
+                    }}
+                  >
+                    <span>+</span>
+                    <span>Add Question to Topic</span>
+                  </button>
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
@@ -581,15 +763,16 @@ export default function AdminPracticePage() {
                     <div
                       key={q.id}
                       style={{
-                        border: '1px solid #e2e8f0',
-                        borderRadius: '12px',
+                        border: '1.5px solid #e2e8f0',
+                        borderRadius: '14px',
                         padding: '1.25rem',
                         background: '#ffffff',
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
                       }}
                     >
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                          <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#64748b' }}>
+                          <span style={{ fontSize: '0.8125rem', fontWeight: 800, color: '#475569' }}>
                             Q{idx + 1}
                           </span>
                           <span style={{
@@ -597,11 +780,15 @@ export default function AdminPracticePage() {
                             fontWeight: 700,
                             textTransform: 'uppercase',
                             background: '#f1f5f9',
-                            color: '#334155',
+                            color: '#1e293b',
+                            border: '1px solid #cbd5e1',
                             padding: '0.125rem 0.5rem',
                             borderRadius: '4px',
                           }}>
-                            {q.question_type}
+                            {q.question_type === 'mcq' && 'Multiple Choice'}
+                            {q.question_type === 'true_false' && 'True / False'}
+                            {q.question_type === 'fill_blank' && 'Fill in the Blank'}
+                            {q.question_type === 'short_answer' && 'Short Answer'}
                           </span>
                           <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
                             • {q.points} pts
@@ -610,6 +797,7 @@ export default function AdminPracticePage() {
 
                         <div style={{ display: 'flex', gap: '0.5rem' }}>
                           <button
+                            type="button"
                             onClick={() => {
                               setCurrentQuestion(q);
                               setQuestionModalMode('edit');
@@ -626,10 +814,11 @@ export default function AdminPracticePage() {
                               cursor: 'pointer',
                             }}
                           >
-                            Edit
+                            ✏️ Edit
                           </button>
                           <button
-                            onClick={() => handleDeleteQuestion(q.id)}
+                            type="button"
+                            onClick={() => setQuestionToDelete(q)}
                             style={{
                               fontSize: '0.75rem',
                               color: '#be123c',
@@ -641,12 +830,12 @@ export default function AdminPracticePage() {
                               cursor: 'pointer',
                             }}
                           >
-                            Delete
+                            🗑️ Delete
                           </button>
                         </div>
                       </div>
 
-                      <p style={{ fontSize: '1rem', fontWeight: 600, color: '#0f172a', margin: '0 0 0.75rem 0', lineHeight: 1.5 }}>
+                      <p style={{ fontSize: '1.05rem', fontWeight: 600, color: '#0f172a', margin: '0 0 0.75rem 0', lineHeight: 1.5 }}>
                         {q.prompt}
                       </p>
 
@@ -659,11 +848,11 @@ export default function AdminPracticePage() {
                               style={{
                                 fontSize: '0.8125rem',
                                 padding: '0.5rem 0.75rem',
-                                borderRadius: '6px',
+                                borderRadius: '8px',
                                 background: opt.is_correct ? '#ecfdf5' : '#f8fafc',
-                                border: `1px solid ${opt.is_correct ? '#a7f3d0' : '#e2e8f0'}`,
+                                border: `1.5px solid ${opt.is_correct ? '#10b981' : '#e2e8f0'}`,
                                 color: opt.is_correct ? '#065f46' : '#475569',
-                                fontWeight: opt.is_correct ? 600 : 400,
+                                fontWeight: opt.is_correct ? 700 : 400,
                               }}
                             >
                               {opt.is_correct ? '✓ ' : '• '} {opt.option_text}
@@ -674,8 +863,16 @@ export default function AdminPracticePage() {
 
                       {/* Accepted answers for short answer */}
                       {q.accepted_answers && q.accepted_answers.length > 0 && (
-                        <div style={{ fontSize: '0.8125rem', color: '#047857', marginBottom: '0.75rem' }}>
-                          <strong>Accepted Answers:</strong> {q.accepted_answers.map((a: any) => a.accepted_text).join(' | ')}
+                        <div style={{
+                          fontSize: '0.8125rem',
+                          color: '#047857',
+                          background: '#f0fdf4',
+                          border: '1px solid #bbf7d0',
+                          padding: '0.5rem 0.75rem',
+                          borderRadius: '6px',
+                          marginBottom: '0.75rem',
+                        }}>
+                          <strong>Accepted Answer Variants:</strong> {q.accepted_answers.map((a: any) => a.accepted_text).join(' | ')}
                         </div>
                       )}
 
@@ -683,13 +880,13 @@ export default function AdminPracticePage() {
                         <div style={{
                           fontSize: '0.8125rem',
                           background: '#f8fafc',
-                          padding: '0.75rem',
+                          padding: '0.75rem 1rem',
                           borderRadius: '8px',
-                          color: '#475569',
-                          border: '1px solid #f1f5f9',
+                          color: '#334155',
+                          border: '1px solid #e2e8f0',
                           lineHeight: 1.5,
                         }}>
-                          <strong>Explanation:</strong> {q.explanation}
+                          <strong style={{ color: '#047857' }}>Explanation: </strong> {q.explanation}
                         </div>
                       )}
                     </div>
@@ -702,49 +899,52 @@ export default function AdminPracticePage() {
       </div>
 
       {/* ---------------------------------------------------------------------- */}
-      {/* Topic Modal */}
+      {/* Topic Create / Edit Modal */}
       {/* ---------------------------------------------------------------------- */}
       {showTopicModal && currentTopic && (
         <div style={{
           position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: 'rgba(0,0,0,0.5)',
+          inset: 0,
+          background: 'rgba(15, 23, 42, 0.65)',
+          backdropFilter: 'blur(4px)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          zIndex: 50,
+          zIndex: 1000,
           padding: '1rem',
         }}>
           <div style={{
             background: '#ffffff',
-            borderRadius: '16px',
-            maxWidth: '520px',
+            borderRadius: '18px',
+            border: '1.5px solid #cbd5e1',
+            maxWidth: '540px',
             width: '100%',
             padding: '2rem',
-            boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)',
+            boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)',
           }}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#0f172a', margin: '0 0 1.25rem 0' }}>
-              {topicModalMode === 'create' ? 'Create Practice Topic' : 'Edit Practice Topic'}
-            </h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
+              <span style={{ fontSize: '1.5rem' }}>🎯</span>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0f172a', margin: 0 }}>
+                {topicModalMode === 'create' ? 'Add Practice Topic' : 'Edit Practice Topic'}
+              </h2>
+            </div>
 
             <form
               onSubmit={async (e) => {
                 e.preventDefault();
                 if (topicModalMode === 'create') {
                   const res = await adminCreatePracticeTopic({
-                    chapter_id: currentTopic.chapter_id,
+                    chapter_id: Number(currentTopic.chapter_id),
                     title: currentTopic.title,
                     description: currentTopic.description,
                     difficulty: currentTopic.difficulty,
-                    order: Number(currentTopic.order),
+                    order: Number(currentTopic.order || 1),
                     is_published: currentTopic.is_published,
                   });
                   if (res.success) {
                     setShowTopicModal(false);
                     await loadOverview();
+                    if (res.id) setSelectedTopicId(res.id);
                   } else {
                     alert(res.error || 'Failed to create topic');
                   }
@@ -753,7 +953,7 @@ export default function AdminPracticePage() {
                     title: currentTopic.title,
                     description: currentTopic.description,
                     difficulty: currentTopic.difficulty,
-                    order: Number(currentTopic.order),
+                    order: Number(currentTopic.order || 1),
                     is_published: currentTopic.is_published,
                   });
                   if (res.success) {
@@ -766,41 +966,61 @@ export default function AdminPracticePage() {
               }}
               style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}
             >
+              {/* Chapter Selector Dropdown */}
               <div>
-                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#334155', marginBottom: '0.25rem' }}>
-                  Topic Title *
+                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 700, color: '#334155', marginBottom: '0.25rem' }}>
+                  Target Chapter / Unit *
+                </label>
+                <select
+                  required
+                  value={currentTopic.chapter_id || ''}
+                  onChange={(e) => setCurrentTopic({ ...currentTopic, chapter_id: Number(e.target.value) })}
+                  style={{ width: '100%', padding: '0.625rem', borderRadius: '8px', border: '1.5px solid #cbd5e1', fontWeight: 600 }}
+                >
+                  {allChaptersList.map((ch) => (
+                    <option key={ch.id} value={ch.id}>
+                      {ch.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 700, color: '#334155', marginBottom: '0.25rem' }}>
+                  Topic / Skill Title *
                 </label>
                 <input
                   type="text"
                   required
                   value={currentTopic.title || ''}
                   onChange={(e) => setCurrentTopic({ ...currentTopic, title: e.target.value })}
-                  style={{ width: '100%', padding: '0.625rem', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                  style={{ width: '100%', padding: '0.625rem', borderRadius: '8px', border: '1.5px solid #cbd5e1' }}
                   placeholder="e.g. Calculating Centripetal Acceleration"
                 />
               </div>
 
               <div>
-                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#334155', marginBottom: '0.25rem' }}>
-                  Description / SLO Outcome
+                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 700, color: '#334155', marginBottom: '0.25rem' }}>
+                  Description / SLO Learning Outcome
                 </label>
                 <textarea
                   rows={2}
                   value={currentTopic.description || ''}
                   onChange={(e) => setCurrentTopic({ ...currentTopic, description: e.target.value })}
-                  style={{ width: '100%', padding: '0.625rem', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                  style={{ width: '100%', padding: '0.625rem', borderRadius: '8px', border: '1.5px solid #cbd5e1' }}
+                  placeholder="Summary of skills tested and board alignment..."
                 />
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#334155', marginBottom: '0.25rem' }}>
-                    Difficulty
+                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 700, color: '#334155', marginBottom: '0.25rem' }}>
+                    Difficulty Level
                   </label>
                   <select
                     value={currentTopic.difficulty || 'intermediate'}
                     onChange={(e) => setCurrentTopic({ ...currentTopic, difficulty: e.target.value })}
-                    style={{ width: '100%', padding: '0.625rem', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                    style={{ width: '100%', padding: '0.625rem', borderRadius: '8px', border: '1.5px solid #cbd5e1' }}
                   >
                     <option value="beginner">Beginner</option>
                     <option value="intermediate">Intermediate</option>
@@ -809,14 +1029,14 @@ export default function AdminPracticePage() {
                 </div>
 
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#334155', marginBottom: '0.25rem' }}>
-                    Order
+                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 700, color: '#334155', marginBottom: '0.25rem' }}>
+                    Sequence / Order
                   </label>
                   <input
                     type="number"
                     value={currentTopic.order || 1}
                     onChange={(e) => setCurrentTopic({ ...currentTopic, order: e.target.value })}
-                    style={{ width: '100%', padding: '0.625rem', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                    style={{ width: '100%', padding: '0.625rem', borderRadius: '8px', border: '1.5px solid #cbd5e1' }}
                   />
                 </div>
               </div>
@@ -828,7 +1048,7 @@ export default function AdminPracticePage() {
                   checked={Boolean(currentTopic.is_published)}
                   onChange={(e) => setCurrentTopic({ ...currentTopic, is_published: e.target.checked })}
                 />
-                <label htmlFor="topic_published" style={{ fontSize: '0.875rem', color: '#334155', cursor: 'pointer' }}>
+                <label htmlFor="topic_published" style={{ fontSize: '0.875rem', color: '#334155', fontWeight: 600, cursor: 'pointer' }}>
                   Publish topic immediately for student practice
                 </label>
               </div>
@@ -838,9 +1058,9 @@ export default function AdminPracticePage() {
                   type="button"
                   onClick={() => setShowTopicModal(false)}
                   style={{
-                    padding: '0.625rem 1rem',
-                    background: '#f1f5f9',
-                    border: 'none',
+                    padding: '0.625rem 1.25rem',
+                    background: '#ffffff',
+                    border: '1.5px solid #cbd5e1',
                     borderRadius: '8px',
                     fontWeight: 600,
                     cursor: 'pointer',
@@ -851,16 +1071,16 @@ export default function AdminPracticePage() {
                 <button
                   type="submit"
                   style={{
-                    padding: '0.625rem 1.25rem',
+                    padding: '0.625rem 1.35rem',
                     background: '#047857',
                     color: '#ffffff',
                     border: 'none',
                     borderRadius: '8px',
-                    fontWeight: 600,
+                    fontWeight: 700,
                     cursor: 'pointer',
                   }}
                 >
-                  Save Topic
+                  Save Practice Topic
                 </button>
               </div>
             </form>
@@ -869,43 +1089,45 @@ export default function AdminPracticePage() {
       )}
 
       {/* ---------------------------------------------------------------------- */}
-      {/* Question Modal (Supports MCQ, True/False, Fill Blank, Short Answer) */}
+      {/* Question Create / Edit Modal */}
       {/* ---------------------------------------------------------------------- */}
       {showQuestionModal && currentQuestion && (
         <div style={{
           position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: 'rgba(0,0,0,0.5)',
+          inset: 0,
+          background: 'rgba(15, 23, 42, 0.65)',
+          backdropFilter: 'blur(4px)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          zIndex: 50,
+          zIndex: 1000,
           padding: '1rem',
           overflowY: 'auto',
         }}>
           <div style={{
             background: '#ffffff',
-            borderRadius: '16px',
+            borderRadius: '18px',
+            border: '1.5px solid #cbd5e1',
             maxWidth: '680px',
             width: '100%',
             maxHeight: '90vh',
             overflowY: 'auto',
             padding: '2rem',
-            boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)',
+            boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)',
           }}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#0f172a', margin: '0 0 1.25rem 0' }}>
-              {questionModalMode === 'create' ? 'Add Practice Question' : 'Edit Practice Question'}
-            </h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
+              <span style={{ fontSize: '1.5rem' }}>✍️</span>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0f172a', margin: 0 }}>
+                {questionModalMode === 'create' ? 'Add Practice Question' : 'Edit Practice Question'}
+              </h2>
+            </div>
 
             <form
               onSubmit={async (e) => {
                 e.preventDefault();
                 if (questionModalMode === 'create') {
                   const res = await adminCreatePracticeQuestion({
-                    topic_id: currentQuestion.topic_id,
+                    topic_id: Number(currentQuestion.topic_id),
                     question_type: currentQuestion.question_type,
                     prompt: currentQuestion.prompt,
                     explanation: currentQuestion.explanation,
@@ -945,9 +1167,28 @@ export default function AdminPracticePage() {
               }}
               style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}
             >
+              {/* Target Topic Dropdown */}
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 700, color: '#334155', marginBottom: '0.25rem' }}>
+                  Target Practice Skill / Topic *
+                </label>
+                <select
+                  required
+                  value={currentQuestion.topic_id || ''}
+                  onChange={(e) => setCurrentQuestion({ ...currentQuestion, topic_id: Number(e.target.value) })}
+                  style={{ width: '100%', padding: '0.625rem', borderRadius: '8px', border: '1.5px solid #cbd5e1', fontWeight: 600 }}
+                >
+                  {allTopicsList.map((tp) => (
+                    <option key={tp.id} value={tp.id}>
+                      {tp.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#334155', marginBottom: '0.25rem' }}>
+                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 700, color: '#334155', marginBottom: '0.25rem' }}>
                     Question Type *
                   </label>
                   <select
@@ -963,7 +1204,7 @@ export default function AdminPracticePage() {
                       }
                       setCurrentQuestion({ ...currentQuestion, question_type: newType, options: newOptions });
                     }}
-                    style={{ width: '100%', padding: '0.625rem', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                    style={{ width: '100%', padding: '0.625rem', borderRadius: '8px', border: '1.5px solid #cbd5e1', fontWeight: 600 }}
                   >
                     <option value="mcq">Multiple Choice (MCQ)</option>
                     <option value="true_false">True / False</option>
@@ -973,20 +1214,20 @@ export default function AdminPracticePage() {
                 </div>
 
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#334155', marginBottom: '0.25rem' }}>
-                    Points
+                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 700, color: '#334155', marginBottom: '0.25rem' }}>
+                    SmartScore Points
                   </label>
                   <input
                     type="number"
                     value={currentQuestion.points || 10}
                     onChange={(e) => setCurrentQuestion({ ...currentQuestion, points: e.target.value })}
-                    style={{ width: '100%', padding: '0.625rem', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                    style={{ width: '100%', padding: '0.625rem', borderRadius: '8px', border: '1.5px solid #cbd5e1' }}
                   />
                 </div>
               </div>
 
               <div>
-                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#334155', marginBottom: '0.25rem' }}>
+                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 700, color: '#334155', marginBottom: '0.25rem' }}>
                   Question Prompt / Problem Statement *
                 </label>
                 <textarea
@@ -994,17 +1235,17 @@ export default function AdminPracticePage() {
                   required
                   value={currentQuestion.prompt || ''}
                   onChange={(e) => setCurrentQuestion({ ...currentQuestion, prompt: e.target.value })}
-                  style={{ width: '100%', padding: '0.625rem', borderRadius: '8px', border: '1px solid #cbd5e1' }}
-                  placeholder="Enter problem statement or prompt..."
+                  style={{ width: '100%', padding: '0.625rem', borderRadius: '8px', border: '1.5px solid #cbd5e1' }}
+                  placeholder="Enter the problem statement or question text..."
                 />
               </div>
 
               {/* Options Table for MCQ / True False */}
               {(currentQuestion.question_type === 'mcq' || currentQuestion.question_type === 'true_false') && (
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                    <label style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#334155' }}>
-                      Options (Check the radio/box for the correct answer)
+                <div style={{ background: '#f8fafc', padding: '1rem', borderRadius: '12px', border: '1.5px solid #e2e8f0' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+                    <label style={{ fontSize: '0.8125rem', fontWeight: 800, color: '#0f172a' }}>
+                      Option Choices (Select the radio for the correct answer)
                     </label>
                     {currentQuestion.question_type === 'mcq' && (
                       <button
@@ -1014,14 +1255,14 @@ export default function AdminPracticePage() {
                           opts.push({ option_text: '', is_correct: false, order: opts.length + 1 });
                           setCurrentQuestion({ ...currentQuestion, options: opts });
                         }}
-                        style={{ fontSize: '0.75rem', color: '#047857', background: 'transparent', border: 'none', cursor: 'pointer', fontWeight: 600 }}
+                        style={{ fontSize: '0.75rem', color: '#047857', background: '#ecfdf5', border: '1px solid #a7f3d0', padding: '0.25rem 0.6rem', borderRadius: '4px', cursor: 'pointer', fontWeight: 700 }}
                       >
-                        + Add Option
+                        + Add Choice
                       </button>
                     )}
                   </div>
 
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
                     {currentQuestion.options?.map((opt: any, idx: number) => (
                       <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <input
@@ -1035,6 +1276,7 @@ export default function AdminPracticePage() {
                             }));
                             setCurrentQuestion({ ...currentQuestion, options: opts });
                           }}
+                          style={{ width: '18px', height: '18px', cursor: 'pointer' }}
                         />
                         <input
                           type="text"
@@ -1046,7 +1288,13 @@ export default function AdminPracticePage() {
                             setCurrentQuestion({ ...currentQuestion, options: opts });
                           }}
                           placeholder={`Option ${idx + 1}`}
-                          style={{ flex: 1, padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                          style={{
+                            flex: 1,
+                            padding: '0.5rem',
+                            borderRadius: '6px',
+                            border: opt.is_correct ? '2px solid #10b981' : '1px solid #cbd5e1',
+                            background: opt.is_correct ? '#ecfdf5' : '#ffffff',
+                          }}
                         />
                         {currentQuestion.question_type === 'mcq' && currentQuestion.options.length > 2 && (
                           <button
@@ -1055,7 +1303,7 @@ export default function AdminPracticePage() {
                               const opts = currentQuestion.options.filter((_: any, i: number) => i !== idx);
                               setCurrentQuestion({ ...currentQuestion, options: opts });
                             }}
-                            style={{ color: '#be123c', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                            style={{ color: '#be123c', background: 'transparent', border: 'none', cursor: 'pointer', fontWeight: 700 }}
                           >
                             ✕
                           </button>
@@ -1068,9 +1316,9 @@ export default function AdminPracticePage() {
 
               {/* Accepted Answers for Fill Blank / Short Answer */}
               {(currentQuestion.question_type === 'fill_blank' || currentQuestion.question_type === 'short_answer') && (
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                    <label style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#334155' }}>
+                <div style={{ background: '#f8fafc', padding: '1rem', borderRadius: '12px', border: '1.5px solid #e2e8f0' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+                    <label style={{ fontSize: '0.8125rem', fontWeight: 800, color: '#0f172a' }}>
                       Accepted Answer Variants (Normalized &amp; Case-Insensitive)
                     </label>
                     <button
@@ -1080,7 +1328,7 @@ export default function AdminPracticePage() {
                         acc.push({ accepted_text: '', is_case_sensitive: false });
                         setCurrentQuestion({ ...currentQuestion, accepted_answers: acc });
                       }}
-                      style={{ fontSize: '0.75rem', color: '#047857', background: 'transparent', border: 'none', cursor: 'pointer', fontWeight: 600 }}
+                      style={{ fontSize: '0.75rem', color: '#047857', background: '#ecfdf5', border: '1px solid #a7f3d0', padding: '0.25rem 0.6rem', borderRadius: '4px', cursor: 'pointer', fontWeight: 700 }}
                     >
                       + Add Accepted Variant
                     </button>
@@ -1099,7 +1347,7 @@ export default function AdminPracticePage() {
                             setCurrentQuestion({ ...currentQuestion, accepted_answers: list });
                           }}
                           placeholder="e.g. 9.8 m/s^2 or Kelvin"
-                          style={{ flex: 1, padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                          style={{ flex: 1, padding: '0.5rem', borderRadius: '6px', border: '1.5px solid #cbd5e1' }}
                         />
                         {currentQuestion.accepted_answers.length > 1 && (
                           <button
@@ -1108,7 +1356,7 @@ export default function AdminPracticePage() {
                               const list = currentQuestion.accepted_answers.filter((_: any, i: number) => i !== idx);
                               setCurrentQuestion({ ...currentQuestion, accepted_answers: list });
                             }}
-                            style={{ color: '#be123c', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                            style={{ color: '#be123c', background: 'transparent', border: 'none', cursor: 'pointer', fontWeight: 700 }}
                           >
                             ✕
                           </button>
@@ -1120,15 +1368,15 @@ export default function AdminPracticePage() {
               )}
 
               <div>
-                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#334155', marginBottom: '0.25rem' }}>
-                  Educational Explanation * (Shown strictly after answering)
+                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 700, color: '#334155', marginBottom: '0.25rem' }}>
+                  Curriculum Explanation * (Shown strictly after student submits answer)
                 </label>
                 <textarea
                   rows={3}
                   required
                   value={currentQuestion.explanation || ''}
                   onChange={(e) => setCurrentQuestion({ ...currentQuestion, explanation: e.target.value })}
-                  style={{ width: '100%', padding: '0.625rem', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                  style={{ width: '100%', padding: '0.625rem', borderRadius: '8px', border: '1.5px solid #cbd5e1' }}
                   placeholder="Explain why this answer is correct according to FBISE standards..."
                 />
               </div>
@@ -1138,9 +1386,9 @@ export default function AdminPracticePage() {
                   type="button"
                   onClick={() => setShowQuestionModal(false)}
                   style={{
-                    padding: '0.625rem 1rem',
-                    background: '#f1f5f9',
-                    border: 'none',
+                    padding: '0.625rem 1.25rem',
+                    background: '#ffffff',
+                    border: '1.5px solid #cbd5e1',
                     borderRadius: '8px',
                     fontWeight: 600,
                     cursor: 'pointer',
@@ -1151,12 +1399,12 @@ export default function AdminPracticePage() {
                 <button
                   type="submit"
                   style={{
-                    padding: '0.625rem 1.25rem',
-                    background: '#047857',
+                    padding: '0.625rem 1.35rem',
+                    background: '#0284c7',
                     color: '#ffffff',
                     border: 'none',
                     borderRadius: '8px',
-                    fontWeight: 600,
+                    fontWeight: 700,
                     cursor: 'pointer',
                   }}
                 >
@@ -1169,55 +1417,262 @@ export default function AdminPracticePage() {
       )}
 
       {/* ---------------------------------------------------------------------- */}
+      {/* Custom Bordered Modal: Delete Topic Confirmation */}
+      {/* ---------------------------------------------------------------------- */}
+      {topicToDelete && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(15, 23, 42, 0.65)',
+          backdropFilter: 'blur(4px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          padding: '1rem',
+        }}>
+          <div style={{
+            background: '#ffffff',
+            borderRadius: '18px',
+            border: '1.5px solid #fecaca',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+            maxWidth: '500px',
+            width: '100%',
+            padding: '2rem',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.25rem' }}>
+              <div style={{
+                width: '48px',
+                height: '48px',
+                borderRadius: '12px',
+                background: '#fef2f2',
+                border: '1.5px solid #fee2e2',
+                color: '#dc2626',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '1.5rem',
+                flexShrink: 0,
+              }}>
+                ⚠️
+              </div>
+              <div>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 800, color: '#0f172a', margin: '0 0 0.25rem 0' }}>
+                  Delete Practice Topic?
+                </h3>
+                <span style={{ fontSize: '0.8125rem', color: '#991b1b', fontWeight: 600 }}>
+                  This will also delete all associated questions
+                </span>
+              </div>
+            </div>
+
+            <div style={{
+              background: '#f8fafc',
+              border: '1px solid #e2e8f0',
+              borderLeft: '4px solid #ef4444',
+              borderRadius: '10px',
+              padding: '1rem',
+              marginBottom: '1.25rem',
+            }}>
+              <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#0f172a' }}>
+                {topicToDelete.title}
+              </div>
+              <div style={{ fontSize: '0.8125rem', color: '#64748b', marginTop: '0.25rem' }}>
+                Contains {topicToDelete.question_count || 0} questions
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+              <button
+                type="button"
+                onClick={() => setTopicToDelete(null)}
+                disabled={isDeletingTopic}
+                style={{
+                  padding: '0.625rem 1.25rem',
+                  background: '#ffffff',
+                  border: '1.5px solid #cbd5e1',
+                  borderRadius: '8px',
+                  fontWeight: 600,
+                  fontSize: '0.875rem',
+                  cursor: 'pointer',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteTopic}
+                disabled={isDeletingTopic}
+                style={{
+                  padding: '0.625rem 1.35rem',
+                  background: '#dc2626',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontWeight: 700,
+                  fontSize: '0.875rem',
+                  cursor: isDeletingTopic ? 'wait' : 'pointer',
+                }}
+              >
+                {isDeletingTopic ? 'Deleting...' : 'Confirm Delete Topic'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ---------------------------------------------------------------------- */}
+      {/* Custom Bordered Modal: Delete Question Confirmation */}
+      {/* ---------------------------------------------------------------------- */}
+      {questionToDelete && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(15, 23, 42, 0.65)',
+          backdropFilter: 'blur(4px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          padding: '1rem',
+        }}>
+          <div style={{
+            background: '#ffffff',
+            borderRadius: '18px',
+            border: '1.5px solid #fecaca',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+            maxWidth: '500px',
+            width: '100%',
+            padding: '2rem',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.25rem' }}>
+              <div style={{
+                width: '48px',
+                height: '48px',
+                borderRadius: '12px',
+                background: '#fef2f2',
+                border: '1.5px solid #fee2e2',
+                color: '#dc2626',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '1.5rem',
+                flexShrink: 0,
+              }}>
+                🗑️
+              </div>
+              <div>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 800, color: '#0f172a', margin: '0 0 0.25rem 0' }}>
+                  Delete Practice Question?
+                </h3>
+                <span style={{ fontSize: '0.8125rem', color: '#991b1b', fontWeight: 600 }}>
+                  Permanent Removal from Question Bank
+                </span>
+              </div>
+            </div>
+
+            <div style={{
+              background: '#f8fafc',
+              border: '1px solid #e2e8f0',
+              borderLeft: '4px solid #ef4444',
+              borderRadius: '10px',
+              padding: '1rem',
+              marginBottom: '1.25rem',
+            }}>
+              <p style={{ fontSize: '0.92rem', fontWeight: 600, color: '#0f172a', margin: 0, lineHeight: 1.5 }}>
+                {questionToDelete.prompt}
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+              <button
+                type="button"
+                onClick={() => setQuestionToDelete(null)}
+                disabled={isDeletingQuestion}
+                style={{
+                  padding: '0.625rem 1.25rem',
+                  background: '#ffffff',
+                  border: '1.5px solid #cbd5e1',
+                  borderRadius: '8px',
+                  fontWeight: 600,
+                  fontSize: '0.875rem',
+                  cursor: 'pointer',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteQuestion}
+                disabled={isDeletingQuestion}
+                style={{
+                  padding: '0.625rem 1.35rem',
+                  background: '#dc2626',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontWeight: 700,
+                  fontSize: '0.875rem',
+                  cursor: isDeletingQuestion ? 'wait' : 'pointer',
+                }}
+              >
+                {isDeletingQuestion ? 'Deleting...' : 'Confirm Delete Question'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ---------------------------------------------------------------------- */}
       {/* Bulk Import Modal */}
       {/* ---------------------------------------------------------------------- */}
       {showImportModal && (
         <div style={{
           position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: 'rgba(0,0,0,0.5)',
+          inset: 0,
+          background: 'rgba(15, 23, 42, 0.65)',
+          backdropFilter: 'blur(4px)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          zIndex: 50,
+          zIndex: 1000,
           padding: '1rem',
         }}>
           <div style={{
             background: '#ffffff',
-            borderRadius: '16px',
+            borderRadius: '18px',
             maxWidth: '680px',
             width: '100%',
             maxHeight: '90vh',
             overflowY: 'auto',
             padding: '2rem',
-            boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)',
+            boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)',
+            border: '1.5px solid #cbd5e1',
           }}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#0f172a', margin: '0 0 0.5rem 0' }}>
+            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0f172a', margin: '0 0 0.5rem 0' }}>
               Bulk Import Questions
             </h2>
             <p style={{ fontSize: '0.875rem', color: '#64748b', marginBottom: '1.25rem' }}>
-              Paste a JSON array of questions with <code>topic_id</code> or <code>topic_slug</code>.
+              Paste a JSON array of questions with <code>topic_id</code> or <code>topic_slug</code> to populate in batch.
             </p>
 
             {importResult && (
               <div style={{
-                padding: '0.75rem',
+                padding: '0.75rem 1rem',
                 background: '#ecfdf5',
                 color: '#065f46',
                 borderRadius: '8px',
+                border: '1px solid #a7f3d0',
                 marginBottom: '1rem',
                 fontWeight: 600,
                 fontSize: '0.875rem',
               }}>
-                {importResult}
+                ✓ {importResult}
               </div>
             )}
 
             <div style={{ marginBottom: '1rem' }}>
-              <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#334155', marginBottom: '0.25rem' }}>
+              <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 700, color: '#334155', marginBottom: '0.25rem' }}>
                 JSON Payload:
               </label>
               <textarea
@@ -1237,7 +1692,7 @@ export default function AdminPracticePage() {
     ]
   }
 ]`}
-                style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.8125rem', padding: '0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.8125rem', padding: '0.75rem', borderRadius: '8px', border: '1.5px solid #cbd5e1' }}
               />
             </div>
 
@@ -1246,9 +1701,9 @@ export default function AdminPracticePage() {
                 type="button"
                 onClick={() => setShowImportModal(false)}
                 style={{
-                  padding: '0.625rem 1rem',
-                  background: '#f1f5f9',
-                  border: 'none',
+                  padding: '0.625rem 1.25rem',
+                  background: '#ffffff',
+                  border: '1.5px solid #cbd5e1',
                   borderRadius: '8px',
                   fontWeight: 600,
                   cursor: 'pointer',
@@ -1261,12 +1716,12 @@ export default function AdminPracticePage() {
                 disabled={importing || !importJsonText.trim()}
                 onClick={handleBulkImport}
                 style={{
-                  padding: '0.625rem 1.25rem',
+                  padding: '0.625rem 1.35rem',
                   background: '#047857',
                   color: '#ffffff',
                   border: 'none',
                   borderRadius: '8px',
-                  fontWeight: 600,
+                  fontWeight: 700,
                   cursor: importing ? 'wait' : 'pointer',
                 }}
               >

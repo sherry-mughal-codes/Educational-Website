@@ -373,3 +373,4 @@ export default async function SubjectPracticePage({ params }: PageProps) {
     </div>
   );
 }
+

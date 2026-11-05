@@ -858,3 +858,4 @@ export default function InteractivePracticePage() {
     </div>
   );
 }
+

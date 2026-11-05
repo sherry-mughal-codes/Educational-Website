@@ -612,3 +612,4 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS(
                 f"Successfully seeded: {total_chapters} chapters, {total_topics} topics, and {total_questions} questions across FBISE subjects!"
             ))
+
