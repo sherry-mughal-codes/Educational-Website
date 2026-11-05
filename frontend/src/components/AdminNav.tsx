@@ -36,6 +36,12 @@ export default function AdminNav() {
             Resources
           </Link>
           <Link
+            href="/admin/orders/"
+            className={`admin-nav-link ${pathname === '/admin/orders/' ? 'active' : ''}`}
+          >
+            Orders &amp; Sales
+          </Link>
+          <Link
             href="/admin/structure/"
             className={`admin-nav-link ${pathname === '/admin/structure/' ? 'active' : ''}`}
           >

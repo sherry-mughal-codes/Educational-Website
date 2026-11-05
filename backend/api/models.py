@@ -1,7 +1,9 @@
 import os
 import uuid
 import re
+from decimal import Decimal
 from django.db import models
+from django.contrib.auth.models import User
 from django.utils.text import slugify
 from django.utils import timezone
 
@@ -149,6 +151,17 @@ class Resource(models.Model):
     file_format = models.CharField(max_length=10, default='PDF')
     page_count = models.PositiveIntegerField(default=0, help_text="Total pages in the complete subject resource")
     file_size_bytes = models.PositiveBigIntegerField(default=0, help_text="File size in bytes")
+    price = models.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        default=Decimal('100.00'),
+        help_text="Configurable price in PKR for complete subject PDF download"
+    )
+    is_free = models.BooleanField(
+        default=False,
+        help_text="If true, download is accessible free of charge for registered students"
+    )
+    currency = models.CharField(max_length=10, default='PKR', help_text="Currency ISO code (default: PKR)")
     is_published = models.BooleanField(default=True, db_index=True)
     published_at = models.DateTimeField(null=True, blank=True)
     author_attribution = models.CharField(
@@ -180,3 +193,112 @@ class Resource(models.Model):
 
     def get_meta_description(self):
         return self.meta_description or self.description
+
+
+class StudentProfile(models.Model):
+    """
+    Supplemental student profile information linked one-to-one with Django User.
+    Maintains email verification status and student account metadata.
+    """
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='student_profile')
+    is_email_verified = models.BooleanField(default=False, db_index=True)
+    verification_token = models.CharField(max_length=100, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Student Profile"
+        verbose_name_plural = "Student Profiles"
+
+    def __str__(self):
+        return f"Student: {self.user.email or self.user.username}"
+
+
+class Order(models.Model):
+    """
+    Represents an order placed by a student for a paid educational resource.
+    Preserves exact price and currency agreed upon at the time of order creation.
+    """
+    STATUS_CHOICES = [
+        ('pending', 'Pending Payment'),
+        ('paid', 'Paid'),
+        ('failed', 'Payment Failed'),
+        ('cancelled', 'Cancelled'),
+        ('refunded', 'Refunded'),
+    ]
+
+    order_reference = models.CharField(
+        max_length=64,
+        unique=True,
+        db_index=True,
+        help_text="Unique external/internal order code (e.g. ORD-20261105-XXXXX)"
+    )
+    student = models.ForeignKey(User, on_delete=models.CASCADE, related_name='orders')
+    resource = models.ForeignKey(Resource, on_delete=models.PROTECT, related_name='orders')
+    amount = models.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        help_text="Exact amount agreed at time of order creation (never mutates)"
+    )
+    currency = models.CharField(max_length=10, default='PKR')
+    payment_gateway = models.CharField(
+        max_length=50,
+        default='jazzcash',
+        help_text="Selected payment provider identifier (e.g. jazzcash, easypaisa, sandbox)"
+    )
+    gateway_reference = models.CharField(
+        max_length=128,
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="External gateway transaction or retrieval reference"
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='pending',
+        db_index=True
+    )
+    gateway_response_data = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Auditable raw payment gateway response/callback metadata"
+    )
+    paid_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = "Order"
+        verbose_name_plural = "Orders"
+
+    def __str__(self):
+        return f"Order {self.order_reference} - {self.student.email} - {self.amount} {self.currency} ({self.status})"
+
+
+class Purchase(models.Model):
+    """
+    Authorized access grant permitting a student to download a paid PDF resource.
+    Created atomically only upon verified successful payment or manual grant.
+    """
+    student = models.ForeignKey(User, on_delete=models.CASCADE, related_name='purchases')
+    resource = models.ForeignKey(Resource, on_delete=models.PROTECT, related_name='purchases')
+    order = models.OneToOneField(Order, on_delete=models.CASCADE, related_name='purchase')
+    is_active = models.BooleanField(
+        default=True,
+        db_index=True,
+        help_text="Active permission to download. Becomes False if refunded/revoked."
+    )
+    access_granted_at = models.DateTimeField(auto_now_add=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revocation_reason = models.CharField(max_length=255, blank=True)
+
+    class Meta:
+        unique_together = ('student', 'resource')
+        ordering = ['-access_granted_at']
+        verbose_name = "Purchase Grant"
+        verbose_name_plural = "Purchase Grants"
+
+    def __str__(self):
+        return f"Purchase: {self.student.email} -> {self.resource.title} (Active: {self.is_active})"

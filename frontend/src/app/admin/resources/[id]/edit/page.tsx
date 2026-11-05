@@ -35,6 +35,8 @@ export default function EditResourcePage() {
   const [metaTitle, setMetaTitle] = useState('');
   const [metaDescription, setMetaDescription] = useState('');
   const [isPublished, setIsPublished] = useState(false);
+  const [price, setPrice] = useState('100.00');
+  const [isFree, setIsFree] = useState(false);
 
   // PDF replacement state
   const [replacementFile, setReplacementFile] = useState<File | null>(null);
@@ -79,6 +81,8 @@ export default function EditResourcePage() {
         setMetaTitle(data.meta_title || '');
         setMetaDescription(data.meta_description || '');
         setIsPublished(Boolean(data.is_published));
+        setPrice(data.price ? String(data.price) : '100.00');
+        setIsFree(Boolean(data.is_free));
       })
       .catch(() => {
         setErrorMessage('Failed to load resource data.');
@@ -112,6 +116,8 @@ export default function EditResourcePage() {
         meta_title: metaTitle.trim(),
         meta_description: metaDescription.trim(),
         is_published: isPublished,
+        price: isFree ? '0.00' : price,
+        is_free: isFree,
       });
 
       if (result.success) {
@@ -338,6 +344,46 @@ export default function EditResourcePage() {
                   onChange={(e) => setPageCount(parseInt(e.target.value, 10) || 0)}
                   className="form-input"
                 />
+              </div>
+            </div>
+
+            {/* Pricing Configuration */}
+            <div className="form-grid-2">
+              <div className="form-group">
+                <label htmlFor="edit-price" className="form-label">
+                  Download Price (PKR) <span className="req">*</span>
+                </label>
+                <input
+                  id="edit-price"
+                  type="number"
+                  step="1"
+                  min="0"
+                  disabled={isFree}
+                  value={price}
+                  onChange={(e) => setPrice(e.target.value)}
+                  className="form-input"
+                  title="Configured price for complete offline PDF download"
+                />
+                <span className="field-hint" style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '4px', display: 'block' }}>
+                  Base price: PKR 100 per PDF. Unlocked only after verified payment.
+                </span>
+              </div>
+
+              <div className="form-group" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                <label className="checkbox-label" htmlFor="edit-is-free" style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontWeight: 500 }}>
+                  <input
+                    id="edit-is-free"
+                    type="checkbox"
+                    checked={isFree}
+                    onChange={(e) => setIsFree(e.target.checked)}
+                    className="form-checkbox"
+                    style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                  />
+                  <span>Mark as Free (Complimentary download)</span>
+                </label>
+                <span className="field-hint" style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '4px', display: 'block' }}>
+                  If checked, verified students can download without payment.
+                </span>
               </div>
             </div>
 

@@ -166,3 +166,41 @@ MAX_UPLOAD_SIZE_MB = int(os.environ.get('MAX_UPLOAD_SIZE_MB', '50'))
 DATA_UPLOAD_MAX_MEMORY_SIZE = MAX_UPLOAD_SIZE_MB * 1024 * 1024
 FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
 
+# Frontend URL
+FRONTEND_BASE_URL = os.environ.get('FRONTEND_BASE_URL', 'http://localhost:3001')
+
+# Email Configuration
+EMAIL_BACKEND = os.environ.get(
+    'EMAIL_BACKEND',
+    'django.core.mail.backends.console.EmailBackend' if DEBUG else 'django.core.mail.backends.smtp.EmailBackend'
+)
+EMAIL_HOST = os.environ.get('EMAIL_HOST', 'localhost')
+EMAIL_PORT = int(os.environ.get('EMAIL_PORT', '587'))
+EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'true').strip().lower() in ('1', 'true', 'yes')
+EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'FBISE Study Notes <noreply@fbise-notes.local>')
+PASSWORD_RESET_TIMEOUT = 259200  # 3 days in seconds
+
+# Payment Gateway Configuration (Pakistan: JazzCash, Easypaisa, Sandbox)
+PAYMENT_GATEWAY_DEFAULT = os.environ.get('PAYMENT_GATEWAY_DEFAULT', 'jazzcash')
+PAYMENT_SANDBOX_ENABLED = os.environ.get('PAYMENT_SANDBOX_ENABLED', 'true').strip().lower() in ('1', 'true', 'yes')
+
+JAZZ_CASH_MERCHANT_ID = os.environ.get('JAZZ_CASH_MERCHANT_ID', '')
+JAZZ_CASH_PASSWORD = os.environ.get('JAZZ_CASH_PASSWORD', '')
+JAZZ_CASH_INTEGRITY_SALT = os.environ.get('JAZZ_CASH_INTEGRITY_SALT', '')
+JAZZ_CASH_RETURN_URL = os.environ.get('JAZZ_CASH_RETURN_URL', f"{FRONTEND_BASE_URL}/checkout/result/")
+JAZZ_CASH_ENDPOINT = os.environ.get(
+    'JAZZ_CASH_ENDPOINT',
+    'https://sandbox.jazzcash.com.pk/CustomerPortal/transactionmanagement/merchantform/'
+)
+
+EASYPAISA_STORE_ID = os.environ.get('EASYPAISA_STORE_ID', '')
+EASYPAISA_HASH_KEY = os.environ.get('EASYPAISA_HASH_KEY', '')
+EASYPAISA_RETURN_URL = os.environ.get('EASYPAISA_RETURN_URL', f"{FRONTEND_BASE_URL}/checkout/result/")
+EASYPAISA_ENDPOINT = os.environ.get(
+    'EASYPAISA_ENDPOINT',
+    'https://easypay.easypaisa.com.pk/easypay/Index.jsf'
+)
+
+

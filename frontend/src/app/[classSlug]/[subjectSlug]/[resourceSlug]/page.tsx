@@ -117,6 +117,53 @@ export default async function ResourceDetailPage({ params }: PageProps) {
             </div>
           </header>
 
+          {/* Complete Subject Guide Purchase & Download Card */}
+          <section className="resource-purchase-banner" aria-label="Purchase and Download">
+            <div className="purchase-banner-left">
+              <span className="purchase-badge">Complete Subject Guide</span>
+              <h2 className="purchase-banner-title">Download Complete Offline PDF Packet</h2>
+              <p className="purchase-banner-desc">
+                Get the complete textbook-solved guide with all units,
+                FBISE Student Learning Outcomes (SLO) benchmarks, and solved numericals in one verified document.
+              </p>
+              <div className="purchase-banner-features">
+                <span>✓ High-Resolution Offline PDF</span>
+                {resource.page_count > 0 && <span>✓ {resource.page_count} Pages</span>}
+                <span>✓ Lifetime Access &amp; Free Updates</span>
+              </div>
+            </div>
+
+            <div className="purchase-banner-right">
+              <div className="purchase-pricing">
+                <span className="price-tag-sub">One-Time Subject Price</span>
+                <span className="price-tag-val">PKR {resource.price || '100'}</span>
+              </div>
+
+              {resource.user_has_purchased && resource.download_url ? (
+                <div className="owned-action-box">
+                  <span className="owned-indicator">✓ You Own This Subject</span>
+                  <a
+                    href={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${resource.download_url}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn-primary btn-large w-full text-center"
+                    title="Download complete paid PDF"
+                  >
+                    Download PDF ↓
+                  </a>
+                </div>
+              ) : (
+                <Link
+                  href={`/checkout/${resource.slug}/`}
+                  className="btn-primary btn-large w-full text-center"
+                  title="Purchase complete subject PDF"
+                >
+                  Purchase &amp; Download (PKR {resource.price || '100'}) →
+                </Link>
+              )}
+            </div>
+          </section>
+
           {/* Online PDF Reader Section */}
           <PdfViewer
             title={resource.title}

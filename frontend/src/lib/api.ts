@@ -51,7 +51,12 @@ export interface ResourceItem {
   page_count: number;
   has_pdf?: boolean;
   pdf_stream_url?: string | null;
+  download_url?: string | null;
   file_size_bytes?: number;
+  price?: string | number;
+  currency?: string;
+  is_free?: boolean;
+  user_has_purchased?: boolean;
   is_published?: boolean;
   author_attribution?: string;
   meta_title?: string;
@@ -390,4 +395,287 @@ export async function adminCreateChapter(payload: {
   }
   return { success: true, id: data.id };
 }
+
+// ==============================================================================
+// Phase 4: Student Accounts & Dashboard API
+// ==============================================================================
+export interface StudentUser {
+  id: number;
+  email: string;
+  full_name: string;
+  is_staff?: boolean;
+  is_superuser?: boolean;
+  purchases_count?: number;
+  date_joined?: string;
+}
+
+export interface PurchaseItem {
+  purchase_id: number;
+  resource_id: number;
+  title: string;
+  slug: string;
+  class_name: string;
+  class_slug: string;
+  subject_name: string;
+  subject_slug: string;
+  file_format: string;
+  page_count: number;
+  file_size_bytes: number;
+  has_pdf: boolean;
+  access_granted_at: string;
+  download_url: string;
+  public_url: string;
+  order_reference: string;
+  amount_paid: string;
+  currency: string;
+}
+
+export interface OrderItem {
+  id: number;
+  order_reference: string;
+  resource_title: string;
+  amount: string;
+  currency: string;
+  payment_gateway: string;
+  status: string;
+  status_display: string;
+  created_at: string;
+  paid_at?: string | null;
+  student_id?: number;
+  student_email?: string;
+  student_name?: string;
+  class_name?: string;
+  subject_name?: string;
+  gateway_reference?: string;
+}
+
+export interface GatewayItem {
+  id: string;
+  name: string;
+  description: string;
+  is_live: boolean;
+  badge: string;
+}
+
+export interface StudentDashboardData {
+  student: StudentUser;
+  purchases: PurchaseItem[];
+  orders: OrderItem[];
+}
+
+export async function studentRegister(payload: {
+  full_name: string;
+  email: string;
+  password: string;
+  password_confirm: string;
+}): Promise<{ success: boolean; user?: StudentUser; error?: string }> {
+  const res = await fetch(`${API_BASE}/api/auth/register/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    credentials: 'include',
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    return { success: false, error: data.error || 'Registration failed' };
+  }
+  return { success: true, user: data.user };
+}
+
+export async function studentLogin(
+  email: string,
+  password: string
+): Promise<{ success: boolean; user?: StudentUser; error?: string }> {
+  const res = await fetch(`${API_BASE}/api/auth/login/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+    credentials: 'include',
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    return { success: false, error: data.error || 'Login failed' };
+  }
+  return { success: true, user: data.user };
+}
+
+export async function studentLogout(): Promise<boolean> {
+  const res = await fetch(`${API_BASE}/api/auth/logout/`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+  return res.ok;
+}
+
+export async function studentGetMe(): Promise<{ authenticated: boolean; user: StudentUser | null }> {
+  try {
+    const res = await fetch(`${API_BASE}/api/auth/me/`, {
+      credentials: 'include',
+      cache: 'no-store',
+    });
+    if (!res.ok) return { authenticated: false, user: null };
+    return await res.json();
+  } catch {
+    return { authenticated: false, user: null };
+  }
+}
+
+export async function studentRequestPasswordReset(email: string): Promise<{ success: boolean; message?: string; error?: string }> {
+  const res = await fetch(`${API_BASE}/api/auth/password-reset/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+    credentials: 'include',
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    return { success: false, error: data.error || 'Password reset request failed' };
+  }
+  return { success: true, message: data.message };
+}
+
+export async function studentConfirmPasswordReset(payload: {
+  uid: string;
+  token: string;
+  new_password: string;
+  new_password_confirm: string;
+}): Promise<{ success: boolean; message?: string; error?: string }> {
+  const res = await fetch(`${API_BASE}/api/auth/password-reset-confirm/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    credentials: 'include',
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    return { success: false, error: data.error || 'Failed to reset password' };
+  }
+  return { success: true, message: data.message };
+}
+
+export async function studentGetDashboard(): Promise<StudentDashboardData | null> {
+  return await fetchApi<StudentDashboardData>('/api/student/dashboard/', {
+    cache: 'no-store',
+  });
+}
+
+// ==============================================================================
+// Phase 4: Orders & Checkout API
+// ==============================================================================
+export async function getPaymentGateways(): Promise<GatewayItem[]> {
+  const data = await fetchApi<{ gateways: GatewayItem[] }>('/api/gateways/', {
+    cache: 'no-store',
+  });
+  return data?.gateways || [];
+}
+
+export async function createOrder(payload: {
+  resource_id?: number;
+  resource_slug?: string;
+  gateway_id?: string;
+  return_url?: string;
+}): Promise<{
+  success: boolean;
+  already_owned?: boolean;
+  order_reference?: string;
+  amount?: string;
+  currency?: string;
+  payment?: {
+    gateway: string;
+    gateway_name: string;
+    action_type: string;
+    action_url: string;
+    form_data?: Record<string, string>;
+  };
+  error?: string;
+}> {
+  const res = await fetch(`${API_BASE}/api/orders/create/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    credentials: 'include',
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    return { success: false, error: data.error || 'Failed to create order' };
+  }
+  return data;
+}
+
+export async function getOrderStatus(orderReference: string): Promise<{
+  order_reference: string;
+  status: string;
+  is_paid: boolean;
+  amount: string;
+  currency: string;
+  payment_gateway: string;
+  gateway_reference?: string;
+  created_at: string;
+  paid_at?: string | null;
+  resource?: {
+    id: number;
+    title: string;
+    slug: string;
+    download_url?: string | null;
+    public_url?: string;
+  };
+  error?: string;
+} | null> {
+  return await fetchApi(`/api/orders/${encodeURIComponent(orderReference)}/status/`, {
+    cache: 'no-store',
+  });
+}
+
+export async function sandboxSimulatePay(orderReference: string): Promise<{ success: boolean; status?: string; error?: string }> {
+  const res = await fetch(`${API_BASE}/api/payments/sandbox-pay/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ order_reference: orderReference }),
+    credentials: 'include',
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    return { success: false, error: data.error || 'Sandbox payment simulation failed' };
+  }
+  return data;
+}
+
+// ==============================================================================
+// Phase 4: Admin Orders & Sales Management API
+// ==============================================================================
+export async function adminGetOrders(filters: {
+  q?: string;
+  status?: string;
+  gateway?: string;
+} = {}): Promise<{
+  total_orders: number;
+  paid_orders_count: number;
+  total_revenue_pkr: string;
+  orders: OrderItem[];
+} | null> {
+  const queryParts: string[] = [];
+  if (filters.q) queryParts.push(`q=${encodeURIComponent(filters.q)}`);
+  if (filters.status) queryParts.push(`status=${encodeURIComponent(filters.status)}`);
+  if (filters.gateway) queryParts.push(`gateway=${encodeURIComponent(filters.gateway)}`);
+
+  const qs = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
+  return await fetchApi(`/api/admin/orders/${qs}`, {
+    cache: 'no-store',
+  });
+}
+
+export async function adminRefundOrder(orderId: number | string, reason: string): Promise<{ success: boolean; message?: string; error?: string }> {
+  const res = await fetch(`${API_BASE}/api/admin/orders/${orderId}/refund/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason }),
+    credentials: 'include',
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    return { success: false, error: data.error || 'Failed to refund order' };
+  }
+  return { success: true, message: data.message };
+}
+
 
