@@ -33,8 +33,9 @@ export default function Navigation() {
     { href: '/', label: 'Home' },
     { href: '/class-9/', label: 'Class 9' },
     { href: '/class-10/', label: 'Class 10' },
-    { href: '/search/', label: 'Search' },
+    { href: '/search/', label: 'Study Resources' },
     { href: '/about/', label: 'About' },
+    { href: '/contact/', label: 'Contact' },
   ];
 
   return (

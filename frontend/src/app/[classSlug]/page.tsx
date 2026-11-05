@@ -44,28 +44,42 @@ export default async function ClassPage({ params }: PageProps) {
     { label: cls.name, href: `/${cls.slug}/` },
   ];
 
+  const getSubjectIcon = (name: string) => {
+    const n = name.toLowerCase();
+    if (n.includes('physics')) return '⚛️';
+    if (n.includes('chemistry')) return '🧪';
+    if (n.includes('math')) return '📐';
+    if (n.includes('bio')) return '🧬';
+    if (n.includes('computer')) return '💻';
+    if (n.includes('english')) return '📖';
+    if (n.includes('pakistan') || n.includes('pak studies')) return '🗺️';
+    if (n.includes('islam')) return '🕌';
+    if (n.includes('urdu')) return '✍️';
+    return '📚';
+  };
+
   return (
     <div className="container">
       <Breadcrumbs items={breadcrumbs} />
 
       <header className="page-header">
-        <span className="badge-pill">Grade Curriculum</span>
+        <span className="badge-pill">Federal Board Matriculation</span>
         <h1 className="page-title">{cls.name} Study Resources</h1>
         <p className="page-subtitle">{cls.description}</p>
       </header>
 
       <section className="section-block">
         <div className="section-header">
-          <h2 className="section-title">Academic Subjects</h2>
+          <h2 className="section-title">Academic Subjects ({cls.subjects.length})</h2>
           <p className="section-subtitle">
-            Select a subject below to access chapter summaries, comprehensive notes, and solved model exercises.
+            Select a subject below to access chapter outlines, syllabus summaries, and solved model exercises.
           </p>
         </div>
 
         {cls.subjects.length === 0 ? (
-          <div className="empty-state-card">
-            <p className="empty-state-title">No subjects registered yet</p>
-            <p className="empty-state-desc">
+          <div className="card text-center" style={{ padding: '3rem 2rem' }}>
+            <p className="card-title" style={{ marginBottom: '0.5rem' }}>No subjects registered yet</p>
+            <p className="card-desc">
               Curriculum data for this class level is currently being populated.
             </p>
           </div>
@@ -75,7 +89,7 @@ export default async function ClassPage({ params }: PageProps) {
               <div key={sub.slug} className="subject-card">
                 <div className="subject-card-top">
                   <div className="subject-icon-wrap" aria-hidden="true">
-                    📚
+                    {getSubjectIcon(sub.name)}
                   </div>
                   <span className="subject-code-badge">{sub.code || 'FBISE'}</span>
                 </div>
