@@ -176,14 +176,18 @@ EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'true').strip().lower() in ('1',
 EMAIL_USE_SSL = os.environ.get('EMAIL_USE_SSL', 'false').strip().lower() in ('1', 'true', 'yes')
 EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '').strip()
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '').strip()
-DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'FBISE Study Notes <noreply@fbise-notes.local>')
+DEFAULT_FROM_EMAIL = (
+    os.environ.get('DEFAULT_FROM_EMAIL', '').strip()
+    or (f"FBISE Study Notes <{EMAIL_HOST_USER}>" if EMAIL_HOST_USER else 'FBISE Study Notes <noreply@fbise-notes.local>')
+)
 EMAIL_TIMEOUT = int(os.environ.get('EMAIL_TIMEOUT', '10'))
 
 # If EMAIL_BACKEND is explicitly defined in environment, use that.
 # Otherwise, if EMAIL_HOST_USER is configured, use smtp.EmailBackend for real delivery;
 # fallback to console backend if no SMTP user has been supplied yet.
 _default_backend = 'django.core.mail.backends.smtp.EmailBackend' if EMAIL_HOST_USER else 'django.core.mail.backends.console.EmailBackend'
-EMAIL_BACKEND = os.environ.get('EMAIL_BACKEND', _default_backend)
+_configured_backend = os.environ.get('EMAIL_BACKEND', '').strip()
+EMAIL_BACKEND = _configured_backend if _configured_backend else _default_backend
 PASSWORD_RESET_TIMEOUT = 259200  # 3 days in seconds
 
 # Payment Gateway Configuration (Pakistan: JazzCash, Easypaisa, Sandbox)

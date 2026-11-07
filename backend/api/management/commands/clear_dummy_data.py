@@ -59,3 +59,4 @@ class Command(BaseCommand):
             self.stdout.write("Cleaned media/pdfs/ storage directory.")
 
         self.stdout.write(self.style.SUCCESS("✓ Successfully cleared all dummy data! The platform is now completely clean for manual entry."))
+
