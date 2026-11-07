@@ -9,11 +9,13 @@ export default function ForgotPasswordPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [devResetUrl, setDevResetUrl] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
     setSuccessMessage(null);
+    setDevResetUrl(null);
 
     if (!email.trim()) {
       setErrorMessage('Please enter your email address.');
@@ -27,6 +29,9 @@ export default function ForgotPasswordPage() {
         setSuccessMessage(
           result.message || 'If an account exists with this email address, password reset instructions have been dispatched.'
         );
+        if (result.reset_url) {
+          setDevResetUrl(result.reset_url);
+        }
       } else {
         setErrorMessage(result.error || 'Failed to dispatch reset instructions.');
       }
@@ -92,8 +97,45 @@ export default function ForgotPasswordPage() {
         ) : (
           <div className="auth-done-box">
             <p className="auth-done-note">
-              Please check your inbox (and spam folder) for an email with your secure password reset link.
+              Please check your inbox for an email with your secure password reset link.
             </p>
+
+            {devResetUrl && (
+              <div style={{
+                margin: '1.25rem 0',
+                padding: '1rem',
+                background: '#eff6ff',
+                border: '1px solid #93c5fd',
+                borderRadius: '8px',
+                textAlign: 'left',
+              }}>
+                <div style={{ fontWeight: 700, color: '#1e40af', fontSize: '0.85rem', marginBottom: '0.35rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                  <span>⚡</span> Local Development Test Link:
+                </div>
+                <p style={{ fontSize: '0.78rem', color: '#475569', margin: '0 0 0.75rem 0', lineHeight: 1.45 }}>
+                  In development mode, outbound SMTP relay is disabled and messages are output to server console. You can test and reset your password right now via this direct link:
+                </p>
+                <a
+                  href={devResetUrl}
+                  className="btn-primary-sm"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.35rem',
+                    textDecoration: 'none',
+                    background: '#2563eb',
+                    color: '#ffffff',
+                    padding: '0.5rem 0.95rem',
+                    borderRadius: '6px',
+                    fontWeight: 600,
+                    fontSize: '0.8125rem',
+                  }}
+                >
+                  Reset Password Now →
+                </a>
+              </div>
+            )}
+
             <Link href="/student/login/" className="btn-outline-sm w-full text-center">
               ← Return to Sign In
             </Link>

@@ -251,6 +251,25 @@ export async function adminGetMe(): Promise<{ authenticated: boolean; user: Admi
   }
 }
 
+export async function adminUpdateProfile(payload: {
+  full_name?: string;
+  email?: string;
+  username?: string;
+  new_password?: string;
+}): Promise<{ success: boolean; message?: string; user?: AdminUser; error?: string }> {
+  const res = await fetch(`${API_BASE}/api/admin/auth/profile/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    credentials: 'include',
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    return { success: false, error: data.error || 'Failed to update profile' };
+  }
+  return { success: true, message: data.message, user: data.user };
+}
+
 export async function adminGetResources(filters: {
   q?: string;
   class?: string;
@@ -446,6 +465,22 @@ export async function adminUpdateClassSubject(
   return { success: true, total_chapters: data.total_chapters, syllabus_overview: data.syllabus_overview };
 }
 
+export async function adminBulkUpdateStructure(
+  updates: Array<{ id: number; total_chapters: number }>
+): Promise<{ success: boolean; updated_count?: number; error?: string }> {
+  const res = await fetch(`${API_BASE}/api/admin/structure/bulk-update/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ updates }),
+    credentials: 'include',
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    return { success: false, error: data.error || 'Failed to bulk update curriculum structure' };
+  }
+  return { success: true, updated_count: data.updated_count };
+}
+
 // ==============================================================================
 // Phase 4: Student Accounts & Dashboard API
 // ==============================================================================
@@ -571,7 +606,7 @@ export async function studentGetMe(): Promise<{ authenticated: boolean; user: St
   }
 }
 
-export async function studentRequestPasswordReset(email: string): Promise<{ success: boolean; message?: string; error?: string }> {
+export async function studentRequestPasswordReset(email: string): Promise<{ success: boolean; message?: string; error?: string; reset_url?: string }> {
   const res = await fetch(`${API_BASE}/api/auth/password-reset/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -582,7 +617,7 @@ export async function studentRequestPasswordReset(email: string): Promise<{ succ
   if (!res.ok) {
     return { success: false, error: data.error || 'Password reset request failed' };
   }
-  return { success: true, message: data.message };
+  return { success: true, message: data.message, reset_url: data.reset_url };
 }
 
 export async function studentConfirmPasswordReset(payload: {

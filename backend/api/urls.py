@@ -44,6 +44,7 @@ urlpatterns = [
     path('admin/auth/login/', views.admin_login, name='admin_login'),
     path('admin/auth/logout/', views.admin_logout, name='admin_logout'),
     path('admin/auth/me/', views.admin_me, name='admin_me'),
+    path('admin/auth/profile/', views.admin_update_profile, name='admin_update_profile'),
 
     # Admin Content & Resource Management
     path('admin/resources/', views.admin_resources_list, name='admin_resources_list'),
@@ -58,6 +59,7 @@ urlpatterns = [
 
     # Admin Educational Structure Management
     path('admin/structure/', views.admin_structure_overview, name='admin_structure_overview'),
+    path('admin/structure/bulk-update/', views.admin_bulk_update_structure, name='admin_bulk_update_structure'),
     path('admin/structure/subjects/', views.admin_create_subject, name='admin_create_subject'),
     path('admin/structure/chapters/', views.admin_create_chapter, name='admin_create_chapter'),
     path('admin/structure/class-subjects/<int:class_subject_id>/', views.admin_update_class_subject, name='admin_update_class_subject'),

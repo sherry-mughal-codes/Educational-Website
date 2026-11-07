@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { adminLogin } from '@/lib/api';
+import PasswordInput from '@/components/PasswordInput';
 
 export default function AdminLoginPage() {
   const router = useRouter();
@@ -76,14 +77,12 @@ export default function AdminLoginPage() {
             <label htmlFor="admin-password" className="form-label">
               Password <span className="req">*</span>
             </label>
-            <input
+            <PasswordInput
               id="admin-password"
-              type="password"
               autoComplete="current-password"
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="form-input"
               placeholder="••••••••••••"
               disabled={isLoading}
             />

@@ -682,6 +682,7 @@ def student_password_reset_request(request):
     """
     Generates time-limited secure reset token and sends reset instructions.
     Generic response prevents user email enumeration.
+    In local development (DEBUG=True), also surfaces reset_url for direct testing.
     """
     if request.method != 'POST':
         return JsonResponse({"error": "Method not allowed"}, status=405)
@@ -692,19 +693,29 @@ def student_password_reset_request(request):
         data = request.POST
 
     email = data.get('email', '').strip().lower()
+    dev_reset_url = None
     if email:
         user = User.objects.filter(email__iexact=email).first()
+        if not user:
+            user = User.objects.filter(username__iexact=email).first()
+
         if user and user.is_active:
             token = default_token_generator.make_token(user)
             uid = urlsafe_base64_encode(force_bytes(user.pk))
             frontend_url = getattr(settings, 'FRONTEND_BASE_URL', 'http://localhost:3001')
             reset_url = f"{frontend_url}/student/reset-password/?uid={uid}&token={token}"
             send_password_reset_email(user, reset_url)
+            if settings.DEBUG:
+                dev_reset_url = reset_url
 
-    return JsonResponse({
+    response_data = {
         "success": True,
         "message": "If an account exists with this email address, password reset instructions have been dispatched."
-    }, status=200)
+    }
+    if dev_reset_url:
+        response_data["reset_url"] = dev_reset_url
+
+    return JsonResponse(response_data, status=200)
 
 
 @csrf_exempt
@@ -1172,6 +1183,67 @@ def admin_me(request):
             "date_joined": request.user.date_joined.isoformat() if request.user.date_joined else None,
             "last_login": request.user.last_login.isoformat() if request.user.last_login else None,
         } if is_admin else None,
+    }, status=200)
+
+@csrf_exempt
+@admin_required
+def admin_update_profile(request):
+    """
+    Updates administrator personal profile information (name, email, username, optional password).
+    """
+    if request.method not in ['POST', 'PUT', 'PATCH']:
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    try:
+        data = json.loads(request.body)
+    except Exception:
+        data = request.POST
+
+    user = request.user
+    full_name = data.get('full_name', '').strip()
+    email = data.get('email', '').strip().lower()
+    username = data.get('username', '').strip()
+    new_password = data.get('new_password', '').strip()
+
+    if username and username != user.username:
+        if User.objects.filter(username=username).exclude(pk=user.pk).exists():
+            return JsonResponse({"error": "Username already taken by another account."}, status=400)
+        user.username = username
+
+    if email:
+        user.email = email
+
+    if full_name:
+        parts = full_name.split(' ', 1)
+        user.first_name = parts[0]
+        user.last_name = parts[1] if len(parts) > 1 else ''
+
+    if new_password:
+        if len(new_password) < 8:
+            return JsonResponse({"error": "New password must be at least 8 characters."}, status=400)
+        user.set_password(new_password)
+
+    user.save()
+
+    # If password changed, update session auth hash so admin isn't logged out
+    if new_password:
+        from django.contrib.auth import update_session_auth_hash
+        update_session_auth_hash(request, user)
+
+    return JsonResponse({
+        "success": True,
+        "message": "Administrator profile updated successfully.",
+        "user": {
+            "username": user.username,
+            "email": user.email,
+            "full_name": user.get_full_name() or user.username,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "is_staff": user.is_staff,
+            "is_superuser": user.is_superuser,
+            "date_joined": user.date_joined.isoformat() if user.date_joined else None,
+            "last_login": user.last_login.isoformat() if user.last_login else None,
+        }
     }, status=200)
 
 
@@ -1707,6 +1779,44 @@ def admin_update_class_subject(request, class_subject_id):
         "id": class_subject.id,
         "total_chapters": class_subject.total_chapters,
         "syllabus_overview": class_subject.syllabus_overview,
+    }, status=200)
+
+@csrf_exempt
+@admin_required
+def admin_bulk_update_structure(request):
+    """
+    Bulk updates curriculum configuration (total_chapters) across multiple ClassSubjects in one atomic save.
+    """
+    if request.method not in ['POST', 'PUT']:
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    try:
+        data = json.loads(request.body)
+    except Exception:
+        data = {}
+
+    updates = data.get('updates', [])
+    if not isinstance(updates, list):
+        return JsonResponse({"error": "Expected a list of updates."}, status=400)
+
+    updated_count = 0
+    with transaction.atomic():
+        for item in updates:
+            cs_id = item.get('id')
+            total_chapters = item.get('total_chapters')
+            if cs_id and total_chapters is not None:
+                try:
+                    total_chapters = int(total_chapters)
+                    if total_chapters >= 0:
+                        ClassSubject.objects.filter(id=cs_id).update(total_chapters=total_chapters)
+                        updated_count += 1
+                except (ValueError, TypeError):
+                    continue
+
+    return JsonResponse({
+        "success": True,
+        "updated_count": updated_count,
+        "message": f"Successfully saved {updated_count} curriculum subjects."
     }, status=200)
 
 

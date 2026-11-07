@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { studentRegister } from '@/lib/api';
 import { trackEvent } from '@/lib/analytics';
+import PasswordInput from '@/components/PasswordInput';
 
 function StudentRegisterForm() {
   const router = useRouter();
@@ -118,15 +119,13 @@ function StudentRegisterForm() {
               <label htmlFor="reg-password" className="form-label">
                 Password <span className="req">*</span>
               </label>
-              <input
+              <PasswordInput
                 id="reg-password"
-                type="password"
                 required
                 autoComplete="new-password"
                 placeholder="At least 8 characters"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="form-input"
                 disabled={isLoading}
               />
             </div>
@@ -135,15 +134,13 @@ function StudentRegisterForm() {
               <label htmlFor="reg-confirm" className="form-label">
                 Confirm Password <span className="req">*</span>
               </label>
-              <input
+              <PasswordInput
                 id="reg-confirm"
-                type="password"
                 required
                 autoComplete="new-password"
                 placeholder="Re-enter password"
                 value={passwordConfirm}
                 onChange={(e) => setPasswordConfirm(e.target.value)}
-                className="form-input"
                 disabled={isLoading}
               />
             </div>

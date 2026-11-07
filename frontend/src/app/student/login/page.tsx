@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { studentLogin } from '@/lib/api';
 import { trackEvent } from '@/lib/analytics';
+import PasswordInput from '@/components/PasswordInput';
 
 function StudentLoginForm() {
   const router = useRouter();
@@ -86,15 +87,13 @@ function StudentLoginForm() {
                 Forgot password?
               </Link>
             </div>
-            <input
+            <PasswordInput
               id="login-password"
-              type="password"
               required
               autoComplete="current-password"
               placeholder="••••••••••••"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="form-input"
               disabled={isLoading}
             />
           </div>

@@ -65,18 +65,28 @@ export default function Navigation() {
 
           {student ? (
             <div className="nav-student-group">
-              <Link
-                href="/student/dashboard/"
-                className={`nav-link nav-link-highlight ${pathname.startsWith('/student/dashboard') ? 'active' : ''}`}
-                title="View your purchased notes and downloads"
-              >
-                My Notes 📖
-              </Link>
+              {student.is_staff ? (
+                <Link
+                  href="/admin/profile/"
+                  className={`nav-link nav-link-highlight ${pathname.startsWith('/admin/profile') ? 'active' : ''}`}
+                  title="View administrator profile and personal details"
+                >
+                  Profile 👤
+                </Link>
+              ) : (
+                <Link
+                  href="/student/dashboard/"
+                  className={`nav-link nav-link-highlight ${pathname.startsWith('/student/dashboard') ? 'active' : ''}`}
+                  title="View your purchased notes and downloads"
+                >
+                  My Notes 📖
+                </Link>
+              )}
               <button
                 type="button"
                 onClick={handleLogout}
                 className="nav-btn-logout"
-                title="Sign out of student account"
+                title="Sign out"
               >
                 Sign Out
               </button>
@@ -138,13 +148,23 @@ export default function Navigation() {
 
             {student ? (
               <>
-                <Link
-                  href="/student/dashboard/"
-                  className="mobile-nav-link mobile-nav-highlight"
-                  onClick={() => setMobileMenuOpen(false)}
-                >
-                  My Notes &amp; Downloads 📖
-                </Link>
+                {student.is_staff ? (
+                  <Link
+                    href="/admin/profile/"
+                    className="mobile-nav-link mobile-nav-highlight"
+                    onClick={() => setMobileMenuOpen(false)}
+                  >
+                    Profile 👤
+                  </Link>
+                ) : (
+                  <Link
+                    href="/student/dashboard/"
+                    className="mobile-nav-link mobile-nav-highlight"
+                    onClick={() => setMobileMenuOpen(false)}
+                  >
+                    My Notes &amp; Downloads 📖
+                  </Link>
+                )}
                 <button
                   type="button"
                   onClick={() => {

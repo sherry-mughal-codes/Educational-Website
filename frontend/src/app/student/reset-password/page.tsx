@@ -4,6 +4,7 @@ import { Suspense, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { studentConfirmPasswordReset } from '@/lib/api';
+import PasswordInput from '@/components/PasswordInput';
 
 function ResetPasswordForm() {
   const searchParams = useSearchParams();
@@ -92,15 +93,13 @@ function ResetPasswordForm() {
               <label htmlFor="new-pw" className="form-label">
                 New Password <span className="req">*</span>
               </label>
-              <input
+              <PasswordInput
                 id="new-pw"
-                type="password"
                 required
                 autoComplete="new-password"
                 placeholder="At least 8 characters"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                className="form-input"
                 disabled={isLoading}
               />
             </div>
@@ -109,15 +108,13 @@ function ResetPasswordForm() {
               <label htmlFor="confirm-pw" className="form-label">
                 Confirm New Password <span className="req">*</span>
               </label>
-              <input
+              <PasswordInput
                 id="confirm-pw"
-                type="password"
                 required
                 autoComplete="new-password"
                 placeholder="Re-enter new password"
                 value={newPasswordConfirm}
                 onChange={(e) => setNewPasswordConfirm(e.target.value)}
-                className="form-input"
                 disabled={isLoading}
               />
             </div>
