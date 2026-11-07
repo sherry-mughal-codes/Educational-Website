@@ -146,7 +146,7 @@ export default async function ResourceDetailPage({ params }: PageProps) {
                 Complete FBISE Solved Guide:
               </span>
               <span style={{ fontSize: '0.9rem', fontWeight: 900, color: '#047857', background: '#f0fdf4', padding: '0.15rem 0.45rem', borderRadius: '4px' }}>
-                PKR {resource.price || '100'}
+                PKR {resource.price ? Number(resource.price).toLocaleString('en-PK') : '300'}
               </span>
             </div>
 
@@ -169,7 +169,7 @@ export default async function ResourceDetailPage({ params }: PageProps) {
                   style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', background: '#047857', color: '#ffffff', padding: '0.4rem 0.95rem', fontSize: '0.8rem', fontWeight: 700, textDecoration: 'none', borderRadius: '6px' }}
                   title="Purchase complete subject PDF"
                 >
-                  📥 Unlock Full PDF (PKR {resource.price || '100'}) →
+                  📥 Unlock Full PDF (PKR {resource.price ? Number(resource.price).toLocaleString('en-PK') : ''}) →
                 </Link>
               )}
             </div>

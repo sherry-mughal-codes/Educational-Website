@@ -11,6 +11,7 @@ urlpatterns = [
     path('classes/<slug:class_slug>/', views.class_detail, name='class_detail'),
     path('classes/<slug:class_slug>/<slug:subject_slug>/', views.subject_detail, name='subject_detail'),
     path('resources/', views.resource_search, name='resource_search'),
+    path('resources/by-slug/<slug:resource_slug>/', views.resource_by_slug, name='resource_by_slug'),
     path('resources/<slug:class_slug>/<slug:subject_slug>/<slug:resource_slug>/', views.resource_detail, name='resource_detail'),
     path('resources/<slug:class_slug>/<slug:subject_slug>/<slug:resource_slug>/pdf-stream/', views.resource_pdf_stream, name='resource_pdf_stream'),
     path('resources/<slug:class_slug>/<slug:subject_slug>/<slug:resource_slug>/download/', views.resource_pdf_download, name='resource_pdf_download'),
@@ -38,6 +39,7 @@ urlpatterns = [
     path('gateways/', views.payment_gateways_list, name='payment_gateways_list'),
     path('payments/gateways/', views.payment_gateways_list, name='payment_gateways_list_alias'),
     path('payments/callback/<str:gateway_name>/', views.payment_callback, name='payment_callback'),
+    path('payments/<str:gateway_name>/callback/', views.payment_callback, name='payment_callback_alias'),
     path('payments/sandbox-pay/', views.sandbox_simulate_payment, name='sandbox_simulate_payment'),
 
     # Admin Authentication

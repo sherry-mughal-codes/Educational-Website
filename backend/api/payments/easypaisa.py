@@ -98,7 +98,24 @@ class EasypaisaGateway(BasePaymentGateway):
 
         # Support direct interactive mobile account submission
         mobile_num = request_data.get('mobile_number') or request_data.get('account_number')
-        if mobile_num and not self.is_configured():
+        pin = request_data.get('mpin') or request_data.get('pin')
+        if not self.is_configured():
+            if not mobile_num or len(str(mobile_num).strip()) < 10:
+                return PaymentVerificationResult(
+                    is_valid=False,
+                    is_paid=False,
+                    order_reference=order_ref,
+                    error_message="Please enter a valid 11-digit Easypaisa mobile number.",
+                    raw_data=request_data
+                )
+            if not pin or len(str(pin).strip()) < 4:
+                return PaymentVerificationResult(
+                    is_valid=False,
+                    is_paid=False,
+                    order_reference=order_ref,
+                    error_message="Please enter your 5-digit Easypaisa Account PIN.",
+                    raw_data=request_data
+                )
             now = datetime.now()
             txn_id = f"EP{now.strftime('%y%m%d%H%M')}{order.id if order else '10'}"
             return PaymentVerificationResult(

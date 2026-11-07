@@ -718,7 +718,7 @@ export async function submitPaymentCallback(gateway: string, payload: Record<str
   status?: string;
   error?: string;
 }> {
-  const res = await fetch(`${API_BASE}/api/payments/${encodeURIComponent(gateway)}/callback/`, {
+  const res = await fetch(`${API_BASE}/api/payments/callback/${encodeURIComponent(gateway)}/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),

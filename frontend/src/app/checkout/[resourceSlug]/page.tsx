@@ -25,15 +25,10 @@ export default function CheckoutPage() {
   const [gateways, setGateways] = useState<GatewayItem[]>([]);
   const [selectedGateway, setSelectedGateway] = useState<string>('jazzcash');
 
-  // Interactive Payment Fields State
+  // Interactive Payment Fields State (Phone number and PIN for wallets, TID for direct transfer)
   const [mobileNumber, setMobileNumber] = useState('');
-  const [cnicLast6, setCnicLast6] = useState('');
   const [mpin, setMpin] = useState('');
   const [tid, setTid] = useState('');
-  const [cardNumber, setCardNumber] = useState('');
-  const [cardHolder, setCardHolder] = useState('');
-  const [cardExpiry, setCardExpiry] = useState('');
-  const [cardCvv, setCardCvv] = useState('');
 
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -51,41 +46,62 @@ export default function CheckoutPage() {
       })
       .catch(() => {});
 
-    // 2. Fetch gateways
+    // 2. Fetch gateways (strictly limit to JazzCash, Easypaisa, and Direct Transfer)
     getPaymentGateways()
       .then((gwList) => {
-        setGateways(gwList);
-        if (gwList.length > 0) {
-          setSelectedGateway(gwList[0].id);
+        const allowed = ['jazzcash', 'easypaisa', 'direct_transfer'];
+        const filtered = (gwList || []).filter((gw) => allowed.includes(gw.id));
+        setGateways(filtered);
+        if (filtered.length > 0) {
+          setSelectedGateway(filtered[0].id);
         }
       })
       .catch(() => {});
 
-    // 3. Fetch resource data
+    // 3. Fetch resource data directly by unique slug
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-    fetch(`${apiUrl}/api/resources/?q=${encodeURIComponent(resourceSlug)}`, { cache: 'no-store' })
-      .then((res) => res.json())
-      .then((data) => {
-        const match = (data.results || []).find((r: ResourceItem) => r.slug === resourceSlug);
-        if (match) {
-          fetch(`${apiUrl}/api/resources/${match.class_slug}/${match.subject_slug}/${match.slug}/`, {
-            credentials: 'include',
-            cache: 'no-store',
-          })
-            .then((res) => res.json())
-            .then((resData) => {
-              setResource(resData);
-              if (resData.user_has_purchased) {
-                setAlreadyOwned(true);
-              }
-            })
-            .catch(() => setErrorMessage('Failed to load resource details.'));
-        } else {
-          setErrorMessage('Resource could not be found.');
+    fetch(`${apiUrl}/api/resources/by-slug/${encodeURIComponent(resourceSlug)}/`, {
+      credentials: 'include',
+      cache: 'no-store',
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error('Resource not found');
+        return res.json();
+      })
+      .then((resData: ResourceItem) => {
+        setResource(resData);
+        if (resData.user_has_purchased) {
+          setAlreadyOwned(true);
         }
+        setErrorMessage(null);
       })
       .catch(() => {
-        setErrorMessage('Failed to connect to FBISE server.');
+        // Fallback search in case of legacy slug mapping
+        fetch(`${apiUrl}/api/resources/?q=${encodeURIComponent(resourceSlug)}`, { cache: 'no-store' })
+          .then((res) => res.json())
+          .then((data) => {
+            const match = (data.results || []).find((r: ResourceItem) => r.slug === resourceSlug);
+            if (match) {
+              fetch(`${apiUrl}/api/resources/${match.class_slug || match.class?.slug}/${match.subject_slug || match.subject?.slug}/${match.slug}/`, {
+                credentials: 'include',
+                cache: 'no-store',
+              })
+                .then((r) => r.json())
+                .then((resData: ResourceItem) => {
+                  setResource(resData);
+                  if (resData.user_has_purchased) {
+                    setAlreadyOwned(true);
+                  }
+                  setErrorMessage(null);
+                })
+                .catch(() => setErrorMessage('Failed to load study guide details.'));
+            } else {
+              setErrorMessage('Resource could not be found.');
+            }
+          })
+          .catch(() => {
+            setErrorMessage('Failed to connect to FBISE server.');
+          });
       })
       .finally(() => setIsLoading(false));
   }, [resourceSlug]);
@@ -97,22 +113,29 @@ export default function CheckoutPage() {
       return;
     }
 
-    if (!resource) return;
+    if (!resource) {
+      setErrorMessage('Resource details are loading. Please wait a moment and try again.');
+      return;
+    }
 
-    // Field validations
+    // Realistic Field Validations
     if (selectedGateway === 'jazzcash' || selectedGateway === 'easypaisa') {
-      if (!mobileNumber.trim() || mobileNumber.trim().length < 10) {
+      const cleanPhone = mobileNumber.trim().replace(/\D/g, '');
+      if (!cleanPhone || cleanPhone.length < 10) {
         setErrorMessage('Please enter a valid 11-digit mobile account number (e.g. 03001234567).');
         return;
       }
-    } else if (selectedGateway === 'direct_transfer') {
-      if (!tid.trim() || tid.trim().length < 6) {
-        setErrorMessage('Please enter the Transaction ID (TID) from your payment confirmation SMS.');
+      if (!mpin.trim() || mpin.trim().length < 4) {
+        setErrorMessage(`Please enter your ${selectedGateway === 'jazzcash' ? '4-digit MPIN' : '5-digit PIN'}.`);
         return;
       }
-    } else if (selectedGateway === 'card') {
-      if (!cardNumber.trim() || cardNumber.replace(/\s+/g, '').length < 12) {
-        setErrorMessage('Please enter a valid debit/credit card number.');
+    } else if (selectedGateway === 'direct_transfer') {
+      if (!mobileNumber.trim() || mobileNumber.trim().length < 10) {
+        setErrorMessage('Please enter your sender mobile phone number.');
+        return;
+      }
+      if (!tid.trim() || tid.trim().length < 6) {
+        setErrorMessage('Please enter the Transaction ID (TID) from your bank/wallet SMS confirmation.');
         return;
       }
     }
@@ -122,10 +145,11 @@ export default function CheckoutPage() {
     setProcessingStep('Initializing secure transaction...');
 
     try {
+      const priceNum = Number(resource.price || 0);
       trackEvent('begin_checkout', {
         currency: 'PKR',
-        value: Number(resource.price || 100),
-        items: [{ item_id: resource.id, item_name: resource.title, price: Number(resource.price || 100) }],
+        value: priceNum,
+        items: [{ item_id: resource.id, item_name: resource.title, price: priceNum }],
       });
 
       const returnUrl = `${window.location.origin}/checkout/result/`;
@@ -154,24 +178,22 @@ export default function CheckoutPage() {
       // Realistic Payment Processing Simulation & Direct Callback
       setProcessingStep(
         selectedGateway === 'jazzcash'
-          ? 'Contacting JazzCash gateway & verifying MPIN...'
+          ? 'Contacting JazzCash gateway & verifying 4-digit MPIN...'
           : selectedGateway === 'easypaisa'
-          ? 'Connecting to Easypaisa network & processing debit...'
-          : selectedGateway === 'direct_transfer'
-          ? 'Verifying bank transaction ID & ledger...'
-          : 'Connecting to 3D Secure Banking Network...'
+          ? 'Connecting to Easypaisa network & verifying account PIN...'
+          : 'Verifying bank transaction ID (TID) & ledger...'
       );
 
       // Submit verification callback
       const callbackPayload: Record<string, any> = {
         order_reference: orderRef,
-        amount: resource.price || '100',
+        amount: resource.price,
         mobile_number: mobileNumber.trim(),
-        cnic_last_6: cnicLast6.trim(),
+        sender_phone: mobileNumber.trim(),
         mpin: mpin.trim(),
+        pin: mpin.trim(),
         transaction_id: tid.trim(),
-        card_number: cardNumber.trim(),
-        cardholder: cardHolder.trim(),
+        tid: tid.trim(),
         resCode: '0000',
         pp_ResponseCode: '000',
       };
@@ -179,17 +201,17 @@ export default function CheckoutPage() {
       const verifyRes = await submitPaymentCallback(selectedGateway, callbackPayload);
 
       if (verifyRes.success) {
-        setProcessingStep('✓ Payment verified! Redirecting to your download...');
+        setProcessingStep('✓ Payment verified! Redirecting to your unlocked study notes...');
         setTimeout(() => {
           router.push(`/checkout/result/?order_ref=${encodeURIComponent(orderRef)}`);
-        }, 600);
+        }, 500);
       } else {
-        setErrorMessage(verifyRes.error || 'Payment authorization was declined. Please try again.');
+        setErrorMessage(verifyRes.error || 'Payment authorization was declined. Please check your credentials.');
         setIsSubmitting(false);
         setProcessingStep(null);
       }
     } catch {
-      setErrorMessage('A network error occurred while establishing your checkout session.');
+      setErrorMessage('A network error occurred while establishing your checkout session. Please try again.');
       setIsSubmitting(false);
       setProcessingStep(null);
     }
@@ -208,6 +230,8 @@ export default function CheckoutPage() {
 
   if (alreadyOwned && resource) {
     const fullDownloadUrl = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${resource.download_url}`;
+    const resourceUrl = `/${resource.class?.slug || 'class-9'}/${resource.subject?.slug || 'physics'}/${resource.slug}/`;
+
     return (
       <div className="container checkout-wrapper" style={{ padding: '1.5rem 1rem', maxWidth: '640px', margin: '0 auto' }}>
         <div className="checkout-already-card" style={{ padding: '1.5rem', textAlign: 'center' }}>
@@ -218,10 +242,13 @@ export default function CheckoutPage() {
           </p>
           <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
             <a href={fullDownloadUrl} target="_blank" rel="noopener noreferrer" className="btn-primary" style={{ padding: '0.5rem 1.25rem', fontSize: '0.875rem' }}>
-              📥 Download PDF Now ↓
+              ⬇ Download Complete PDF
             </a>
+            <Link href={resourceUrl} className="btn-outline-sm" style={{ padding: '0.5rem 1.25rem', fontSize: '0.875rem' }}>
+              Read Online
+            </Link>
             <Link href="/student/dashboard/" className="btn-outline-sm" style={{ padding: '0.5rem 1.25rem', fontSize: '0.875rem' }}>
-              Student Dashboard →
+              My Purchases
             </Link>
           </div>
         </div>
@@ -229,14 +256,34 @@ export default function CheckoutPage() {
     );
   }
 
+  const displayPrice = resource?.price ? Number(resource.price).toLocaleString('en-PK') : '...';
+
   return (
-    <div className="container checkout-wrapper" style={{ padding: '1rem 0.5rem 2.5rem', maxWidth: '960px', margin: '0 auto' }}>
-      <div className="checkout-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.25rem', alignItems: 'start' }}>
-        {/* Left Column: Order Summary */}
+    <div className="container checkout-wrapper" style={{ padding: '1rem 1rem 2.5rem 1rem', maxWidth: '860px', margin: '0 auto' }}>
+      <div className="breadcrumbs" style={{ margin: '0 0 0.85rem 0', fontSize: '0.78rem' }}>
+        <Link href="/">Home</Link>
+        <span>/</span>
+        {resource?.class && (
+          <>
+            <Link href={`/${resource.class.slug}/`}>{resource.class.name}</Link>
+            <span>/</span>
+          </>
+        )}
+        {resource?.subject && (
+          <>
+            <Link href={`/${resource.class?.slug || 'class-9'}/${resource.subject.slug}/`}>{resource.subject.name}</Link>
+            <span>/</span>
+          </>
+        )}
+        <span>Checkout</span>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.15rem' }}>
+        {/* Left Column: Resource Summary */}
         <div className="checkout-summary-card" style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '1.25rem', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-          <span className="checkout-badge" style={{ fontSize: '0.7rem', padding: '0.15rem 0.55rem', borderRadius: '4px', background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', fontWeight: 700, textTransform: 'uppercase' }}>
-            FBISE Official Study Packet
-          </span>
+          <div style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#047857', letterSpacing: '0.05em' }}>
+            Order Summary
+          </div>
           <h1 style={{ fontSize: '1.2rem', fontWeight: 800, color: '#0f172a', margin: '0.5rem 0 0.35rem 0', lineHeight: 1.3 }}>
             {resource?.title || 'FBISE Subject Notes'}
           </h1>
@@ -263,7 +310,7 @@ export default function CheckoutPage() {
           <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '0.85rem', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: '#64748b' }}>
               <span>Price:</span>
-              <span style={{ fontWeight: 700, color: '#0f172a' }}>PKR {resource?.price || '100'}</span>
+              <span style={{ fontWeight: 700, color: '#0f172a' }}>PKR {displayPrice}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: '#64748b' }}>
               <span>Taxes / Processing:</span>
@@ -271,7 +318,7 @@ export default function CheckoutPage() {
             </div>
             <div style={{ borderTop: '1px dashed #cbd5e1', paddingTop: '0.5rem', marginTop: '0.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ fontSize: '0.95rem', fontWeight: 800, color: '#0f172a' }}>Total Amount:</span>
-              <span style={{ fontSize: '1.25rem', fontWeight: 900, color: '#047857' }}>PKR {resource?.price || '100'}</span>
+              <span style={{ fontSize: '1.25rem', fontWeight: 900, color: '#047857' }}>PKR {displayPrice}</span>
             </div>
           </div>
         </div>
@@ -330,7 +377,7 @@ export default function CheckoutPage() {
                 <strong style={{ color: '#0f172a' }}>{student.full_name || student.email}</strong>
               </div>
 
-              {/* Payment Gateway Radio List */}
+              {/* Payment Gateway Radio List (3 options only: JazzCash, Easypaisa, Direct Transfer) */}
               <div style={{ marginBottom: '1rem' }}>
                 <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, color: '#334155', marginBottom: '0.45rem', textTransform: 'uppercase' }}>
                   Choose Pakistani Payment Option:
@@ -343,9 +390,9 @@ export default function CheckoutPage() {
                         display: 'flex',
                         alignItems: 'flex-start',
                         gap: '0.65rem',
-                        padding: '0.65rem 0.85rem',
+                        padding: '0.65rem 0.75rem',
                         borderRadius: '8px',
-                        border: selectedGateway === gw.id ? '2px solid #047857' : '1px solid #e2e8f0',
+                        border: selectedGateway === gw.id ? '2px solid #047857' : '1px solid #cbd5e1',
                         background: selectedGateway === gw.id ? '#f0fdf4' : '#ffffff',
                         cursor: 'pointer',
                         transition: 'all 0.15s ease',
@@ -353,7 +400,7 @@ export default function CheckoutPage() {
                     >
                       <input
                         type="radio"
-                        name="payment_gateway"
+                        name="gateway"
                         value={gw.id}
                         checked={selectedGateway === gw.id}
                         onChange={() => {
@@ -362,8 +409,8 @@ export default function CheckoutPage() {
                         }}
                         style={{ marginTop: '0.2rem', accentColor: '#047857' }}
                       />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
                           <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#0f172a' }}>
                             {gw.name}
                           </span>
@@ -380,17 +427,17 @@ export default function CheckoutPage() {
                 </div>
               </div>
 
-              {/* Gateway-Specific Realistic Form Fields */}
+              {/* Gateway-Specific Form Fields */}
               <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0.85rem', marginBottom: '1rem' }}>
                 {selectedGateway === 'jazzcash' && (
                   <div>
                     <div style={{ fontWeight: 700, color: '#b91c1c', fontSize: '0.825rem', marginBottom: '0.65rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                      <span>📱</span> JazzCash Mobile Account Details
+                      <span>📱</span> JazzCash Mobile Account
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.65rem', marginBottom: '0.65rem' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
                       <div>
                         <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#334155', marginBottom: '0.2rem' }}>
-                          JazzCash Mobile Number <span style={{ color: '#dc2626' }}>*</span>
+                          Phone Number <span style={{ color: '#dc2626' }}>*</span>
                         </label>
                         <input
                           type="tel"
@@ -404,30 +451,16 @@ export default function CheckoutPage() {
                       </div>
                       <div>
                         <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#334155', marginBottom: '0.2rem' }}>
-                          CNIC (Last 6 Digits)
+                          Account PIN (4-digit MPIN) <span style={{ color: '#dc2626' }}>*</span>
                         </label>
-                        <input
-                          type="text"
-                          maxLength={6}
-                          placeholder="123456"
-                          value={cnicLast6}
-                          onChange={(e) => setCnicLast6(e.target.value)}
-                          className="form-input"
+                        <PasswordInput
+                          maxLength={4}
+                          placeholder="••••"
+                          value={mpin}
+                          onChange={(e) => setMpin(e.target.value)}
                           style={{ fontSize: '0.85rem', padding: '0.45rem 0.65rem' }}
                         />
                       </div>
-                    </div>
-                    <div>
-                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#334155', marginBottom: '0.2rem' }}>
-                        JazzCash MPIN (4 Digits) <span style={{ color: '#dc2626' }}>*</span>
-                      </label>
-                      <PasswordInput
-                        maxLength={4}
-                        placeholder="••••"
-                        value={mpin}
-                        onChange={(e) => setMpin(e.target.value)}
-                        style={{ fontSize: '0.85rem', padding: '0.45rem 0.65rem' }}
-                      />
                     </div>
                   </div>
                 )}
@@ -435,12 +468,12 @@ export default function CheckoutPage() {
                 {selectedGateway === 'easypaisa' && (
                   <div>
                     <div style={{ fontWeight: 700, color: '#047857', fontSize: '0.825rem', marginBottom: '0.65rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                      <span>📱</span> Easypaisa Wallet Authorization
+                      <span>📱</span> Easypaisa Mobile Account
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.65rem', marginBottom: '0.65rem' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
                       <div>
                         <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#334155', marginBottom: '0.2rem' }}>
-                          Easypaisa Account Number <span style={{ color: '#dc2626' }}>*</span>
+                          Phone Number <span style={{ color: '#dc2626' }}>*</span>
                         </label>
                         <input
                           type="tel"
@@ -454,7 +487,7 @@ export default function CheckoutPage() {
                       </div>
                       <div>
                         <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#334155', marginBottom: '0.2rem' }}>
-                          Account PIN (5 Digits) <span style={{ color: '#dc2626' }}>*</span>
+                          Account PIN (5-digit PIN) <span style={{ color: '#dc2626' }}>*</span>
                         </label>
                         <PasswordInput
                           maxLength={5}
@@ -476,12 +509,12 @@ export default function CheckoutPage() {
                     <div style={{ background: '#ffffff', padding: '0.65rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.78rem', color: '#334155', marginBottom: '0.65rem' }}>
                       <div>Account: <strong>0300-8889999</strong> (JazzCash / Easypaisa / Raast)</div>
                       <div>Title: <strong>FBISE Notes Official</strong></div>
-                      <div>Amount: <strong>PKR {resource?.price || '100'}</strong></div>
+                      <div>Amount: <strong>PKR {displayPrice}</strong></div>
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.65rem' }}>
                       <div>
                         <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#334155', marginBottom: '0.2rem' }}>
-                          Your Sender Phone Number <span style={{ color: '#dc2626' }}>*</span>
+                          Sender Phone Number <span style={{ color: '#dc2626' }}>*</span>
                         </label>
                         <input
                           type="tel"
@@ -510,84 +543,18 @@ export default function CheckoutPage() {
                     </div>
                   </div>
                 )}
-
-                {selectedGateway === 'card' && (
-                  <div>
-                    <div style={{ fontWeight: 700, color: '#0f172a', fontSize: '0.825rem', marginBottom: '0.65rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                      <span>💳</span> Debit / Credit Card (Visa / Mastercard)
-                    </div>
-                    <div style={{ marginBottom: '0.5rem' }}>
-                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#334155', marginBottom: '0.2rem' }}>
-                        Card Number <span style={{ color: '#dc2626' }}>*</span>
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        maxLength={19}
-                        placeholder="4111 2222 3333 4444"
-                        value={cardNumber}
-                        onChange={(e) => setCardNumber(e.target.value)}
-                        className="form-input"
-                        style={{ fontSize: '0.85rem', padding: '0.45rem 0.65rem' }}
-                      />
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '0.5rem' }}>
-                      <div>
-                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#334155', marginBottom: '0.2rem' }}>
-                          Cardholder Name
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="Muhammad Ali"
-                          value={cardHolder}
-                          onChange={(e) => setCardHolder(e.target.value)}
-                          className="form-input"
-                          style={{ fontSize: '0.85rem', padding: '0.45rem 0.65rem' }}
-                        />
-                      </div>
-                      <div>
-                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#334155', marginBottom: '0.2rem' }}>
-                          Expiry
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="MM/YY"
-                          maxLength={5}
-                          value={cardExpiry}
-                          onChange={(e) => setCardExpiry(e.target.value)}
-                          className="form-input"
-                          style={{ fontSize: '0.85rem', padding: '0.45rem 0.65rem' }}
-                        />
-                      </div>
-                      <div>
-                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#334155', marginBottom: '0.2rem' }}>
-                          CVV
-                        </label>
-                        <input
-                          type="password"
-                          placeholder="•••"
-                          maxLength={4}
-                          value={cardCvv}
-                          onChange={(e) => setCardCvv(e.target.value)}
-                          className="form-input"
-                          style={{ fontSize: '0.85rem', padding: '0.45rem 0.65rem' }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                )}
               </div>
 
               {/* Security Banner */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.75rem', color: '#64748b', marginBottom: '1rem' }}>
                 <span>🔒</span>
-                <span>256-Bit Encrypted Pakistani Banking Gateway. Instant access granted upon authorization.</span>
+                <span>Instant payment verification. PDF study packet is unlocked immediately upon authorization.</span>
               </div>
 
               <button
                 type="submit"
                 className="btn-primary w-full"
-                disabled={isSubmitting}
+                disabled={isSubmitting || !resource}
                 style={{
                   background: '#047857',
                   padding: '0.65rem 1.25rem',
@@ -596,12 +563,12 @@ export default function CheckoutPage() {
                   borderRadius: '8px',
                 }}
               >
-                {isSubmitting ? 'Verifying Transaction...' : `Pay PKR ${resource?.price || '100'} & Unlock PDF →`}
+                {isSubmitting ? 'Verifying Transaction...' : `Pay PKR ${displayPrice} & Unlock PDF →`}
               </button>
 
               <div style={{ textAlign: 'center', marginTop: '0.75rem' }}>
                 <Link
-                  href={`/${resource?.class?.slug || 'class-9'}/${resource?.subject?.slug || 'physics'}/${resource?.slug || resourceSlug}/`}
+                  href={`/${resource?.class?.slug || 'class-9'}/${resource?.subject?.slug || 'biology'}/${resource?.slug || resourceSlug}/`}
                   style={{ fontSize: '0.8rem', color: '#64748b', textDecoration: 'none' }}
                 >
                   ← Cancel and return to study notes

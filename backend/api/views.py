@@ -330,6 +330,20 @@ def resource_detail(request, class_slug, subject_slug, resource_slug):
         "updated_at": resource.updated_at.isoformat(),
     }, status=200)
 
+def resource_by_slug(request, resource_slug):
+    """
+    Direct lookup for a published resource by unique slug without requiring class and subject in URL.
+    Used by checkout and standalone viewer.
+    """
+    resource = get_object_or_404(
+        Resource.objects.select_related('class_subject__class_level', 'class_subject__subject'),
+        slug=resource_slug,
+        is_published=True
+    )
+    cls = resource.class_subject.class_level
+    subj = resource.class_subject.subject
+    return resource_detail(request, cls.slug, subj.slug, resource.slug)
+
 def resource_search(request):
     """
     Public search endpoint for educational resources.
@@ -347,6 +361,8 @@ def resource_search(request):
     if query:
         qs = qs.filter(
             Q(title__icontains=query) |
+            Q(slug__iexact=query) |
+            Q(slug__icontains=query) |
             Q(description__icontains=query) |
             Q(content_preview__icontains=query) |
             Q(class_subject__subject__name__icontains=query) |

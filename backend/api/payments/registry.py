@@ -58,13 +58,6 @@ def list_available_gateways() -> List[Dict[str, Any]]:
             'is_live': True,
             'badge': 'Manual Transfer (TID)',
         },
-        {
-            'id': 'card',
-            'name': 'Debit / Credit Card (Visa / Mastercard)',
-            'description': 'Secure online checkout using any Pakistani bank debit card or credit card.',
-            'is_live': True,
-            'badge': '3D Secure Card',
-        },
     ]
 
     if getattr(settings, 'PAYMENT_SANDBOX_ENABLED', True):

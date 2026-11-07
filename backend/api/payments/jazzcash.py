@@ -130,7 +130,24 @@ class JazzCashGateway(BasePaymentGateway):
 
         # Support direct interactive mobile account submission
         mobile_num = request_data.get('mobile_number') or request_data.get('account_number')
-        if mobile_num and not self.is_configured():
+        mpin = request_data.get('mpin') or request_data.get('pin')
+        if not self.is_configured():
+            if not mobile_num or len(str(mobile_num).strip()) < 10:
+                return PaymentVerificationResult(
+                    is_valid=False,
+                    is_paid=False,
+                    order_reference=bill_ref,
+                    error_message="Please enter a valid 11-digit JazzCash mobile number.",
+                    raw_data=request_data
+                )
+            if not mpin or len(str(mpin).strip()) < 4:
+                return PaymentVerificationResult(
+                    is_valid=False,
+                    is_paid=False,
+                    order_reference=bill_ref,
+                    error_message="Please enter your 4-digit JazzCash MPIN.",
+                    raw_data=request_data
+                )
             now = datetime.now()
             txn_id = f"JC{now.strftime('%y%m%d%H%M')}{order.id if order else '10'}"
             return PaymentVerificationResult(
