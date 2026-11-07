@@ -115,11 +115,11 @@ export default async function ClassPage({ params }: PageProps) {
                 <div className="subject-meta-info">
                   {sub.total_chapters > 0 && (
                     <span className="meta-tag">
-                      {sub.total_chapters} Curriculum Units
+                      📖 {sub.total_chapters} {sub.total_chapters === 1 ? 'Unit' : 'Units'}
                     </span>
                   )}
                   <span className="meta-tag">
-                    {(sub.published_resources_count || sub.resources_count || 0)} Notes Available
+                    📄 {(sub.published_resources_count || sub.resources_count || 0)} Notes Available
                   </span>
                 </div>
 

@@ -125,22 +125,6 @@ export default function PdfViewer({
               </button>
             )}
 
-            {webReaderUrl && (
-              <Link
-                href={webReaderUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn-outline-sm"
-                style={{ fontSize: '0.8125rem', padding: '0.4rem 0.75rem' }}
-                title="Open dedicated reader page on website"
-                onClick={() => {
-                  trackEvent('open_dedicated_web_reader', { resource_title: title });
-                }}
-              >
-                Dedicated Tab ↗
-              </Link>
-            )}
-
             {/* STRICT PAYMENT GATED DOWNLOAD BUTTON */}
             {userHasPurchased && fullDownloadUrl ? (
               <a

@@ -159,16 +159,16 @@ export default async function HomePage() {
 
         {/* Interactive Learning & Practice Highlight (Clean, Concise Callout) */}
         <section style={{
-          marginTop: '2.5rem',
-          padding: '2rem',
-          borderRadius: '16px',
+          marginTop: '1.25rem',
+          padding: '1.15rem 1.25rem',
+          borderRadius: '12px',
           background: 'linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%)',
           border: '1px solid #a7f3d0',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           flexWrap: 'wrap',
-          gap: '1.5rem',
+          gap: '1rem',
           boxShadow: '0 2px 4px rgba(4, 120, 87, 0.05)',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', flex: '1 1 320px' }}>

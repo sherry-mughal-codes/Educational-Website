@@ -65,37 +65,18 @@ export default function Navigation() {
 
           {student ? (
             <div className="nav-student-group">
-              {student.is_staff ? (
-                <>
-                  <Link
-                    href="/admin/resources/"
-                    className={`nav-link ${pathname.startsWith('/admin') && pathname !== '/admin/profile/' ? 'active' : ''}`}
-                    title="Open FBISE Administrator Control Center"
-                  >
-                    Admin Console 🛡️
-                  </Link>
-                  <Link
-                    href="/admin/profile/"
-                    className={`nav-link nav-link-highlight ${pathname === '/admin/profile/' ? 'active' : ''}`}
-                    title="View Administrator Profile & Personal Information"
-                  >
-                    Profile 👤
-                  </Link>
-                </>
-              ) : (
-                <Link
-                  href="/student/dashboard/"
-                  className={`nav-link nav-link-highlight ${pathname.startsWith('/student/dashboard') ? 'active' : ''}`}
-                  title="View your purchased notes and downloads"
-                >
-                  My Notes 📖
-                </Link>
-              )}
+              <Link
+                href="/student/dashboard/"
+                className={`nav-link nav-link-highlight ${pathname.startsWith('/student/dashboard') ? 'active' : ''}`}
+                title="View your purchased notes and downloads"
+              >
+                My Notes 📖
+              </Link>
               <button
                 type="button"
                 onClick={handleLogout}
                 className="nav-btn-logout"
-                title="Sign out of active account"
+                title="Sign out of student account"
               >
                 Sign Out
               </button>
@@ -157,32 +138,13 @@ export default function Navigation() {
 
             {student ? (
               <>
-                {student.is_staff ? (
-                  <>
-                    <Link
-                      href="/admin/resources/"
-                      className="mobile-nav-link"
-                      onClick={() => setMobileMenuOpen(false)}
-                    >
-                      Admin Console 🛡️
-                    </Link>
-                    <Link
-                      href="/admin/profile/"
-                      className="mobile-nav-link mobile-nav-highlight"
-                      onClick={() => setMobileMenuOpen(false)}
-                    >
-                      Administrator Profile 👤
-                    </Link>
-                  </>
-                ) : (
-                  <Link
-                    href="/student/dashboard/"
-                    className="mobile-nav-link mobile-nav-highlight"
-                    onClick={() => setMobileMenuOpen(false)}
-                  >
-                    My Notes &amp; Downloads 📖
-                  </Link>
-                )}
+                <Link
+                  href="/student/dashboard/"
+                  className="mobile-nav-link mobile-nav-highlight"
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  My Notes &amp; Downloads 📖
+                </Link>
                 <button
                   type="button"
                   onClick={() => {
@@ -191,7 +153,7 @@ export default function Navigation() {
                   }}
                   className="mobile-nav-link text-left"
                 >
-                  Sign Out ({student.username || student.full_name || student.email})
+                  Sign Out ({student.full_name || student.email})
                 </button>
               </>
             ) : (

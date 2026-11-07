@@ -8,6 +8,7 @@ import {
   adminGetStructure,
   adminCreateChapter,
   adminCreateSubject,
+  adminUpdateClassSubject,
   adminGetMe,
   ChapterItem,
 } from '@/lib/api';
@@ -53,6 +54,38 @@ export default function AdminStructurePage() {
   const [subjectDesc, setSubjectDesc] = useState('');
   const [selectedClassIds, setSelectedClassIds] = useState<number[]>([]);
   const [isSubmittingSubject, setIsSubmittingSubject] = useState(false);
+
+  // Manual Editing of Total Chapters/Units Count
+  const [editingChaptersCount, setEditingChaptersCount] = useState<{ [classSubId: number]: number }>({});
+  const [savingChaptersCount, setSavingChaptersCount] = useState<number | null>(null);
+
+  const handleUpdateChaptersCount = async (classSubId: number) => {
+    const newCount = editingChaptersCount[classSubId];
+    if (newCount === undefined || newCount < 0) return;
+    setSavingChaptersCount(classSubId);
+    setErrorMessage(null);
+    try {
+      const res = await adminUpdateClassSubject(classSubId, { total_chapters: newCount });
+      if (res.success) {
+        setSuccessMessage('Updated total chapters/units successfully.');
+        setClasses((prev) =>
+          prev.map((c) => ({
+            ...c,
+            class_subjects: c.class_subjects.map((cs) =>
+              cs.id === classSubId ? { ...cs, total_chapters: newCount } : cs
+            ),
+          }))
+        );
+        setTimeout(() => setSuccessMessage(null), 3000);
+      } else {
+        setErrorMessage(res.error || 'Failed to update total chapters.');
+      }
+    } catch {
+      setErrorMessage('Network error updating total chapters.');
+    } finally {
+      setSavingChaptersCount(null);
+    }
+  };
 
   // Check auth
   useEffect(() => {
@@ -286,8 +319,59 @@ export default function AdminStructurePage() {
                           </div>
                         </div>
                         <span className="subject-chapter-count">
-                          {cs.chapters.length > 0 ? `${cs.chapters.length} Chapters` : '0 Chapters'}
+                          {cs.chapters.length > 0 ? `${cs.chapters.length} Created` : '0 Created'}
                         </span>
+                      </div>
+
+                      {/* Manual Editable Chapters/Units Count */}
+                      <div style={{
+                        margin: '0.65rem 0',
+                        padding: '0.45rem 0.65rem',
+                        background: '#f8fafc',
+                        borderRadius: '8px',
+                        border: '1px solid #e2e8f0',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: '0.5rem',
+                      }}>
+                        <span style={{ fontSize: '0.78rem', color: '#475569', fontWeight: 600 }}>
+                          Syllabus Units / Chapters:
+                        </span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                          <input
+                            type="number"
+                            min="0"
+                            max="50"
+                            defaultValue={cs.total_chapters}
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value, 10);
+                              if (!isNaN(val)) {
+                                setEditingChaptersCount((prev) => ({ ...prev, [cs.id]: val }));
+                              }
+                            }}
+                            style={{
+                              width: '52px',
+                              padding: '0.2rem 0.35rem',
+                              fontSize: '0.8125rem',
+                              borderRadius: '4px',
+                              border: '1px solid #cbd5e1',
+                              textAlign: 'center',
+                              fontWeight: 700,
+                            }}
+                            title="Enter realistic number of units/chapters in textbook"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateChaptersCount(cs.id)}
+                            disabled={savingChaptersCount === cs.id}
+                            className="btn-outline-sm"
+                            style={{ padding: '0.2rem 0.55rem', fontSize: '0.75rem', fontWeight: 700 }}
+                            title="Save new number of chapters for this subject"
+                          >
+                            {savingChaptersCount === cs.id ? '...' : 'Save'}
+                          </button>
+                        </div>
                       </div>
 
                       {/* Chapters list */}

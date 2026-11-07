@@ -1673,6 +1673,42 @@ def admin_create_chapter(request):
         "slug": chapter.slug,
     }, status=201)
 
+@csrf_exempt
+@admin_required
+def admin_update_class_subject(request, class_subject_id):
+    """
+    Updates curriculum configuration (e.g. total_chapters, syllabus_overview) for a ClassSubject.
+    """
+    if request.method not in ['POST', 'PUT', 'PATCH']:
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    class_subject = get_object_or_404(ClassSubject, id=class_subject_id)
+
+    try:
+        data = json.loads(request.body)
+    except Exception:
+        data = request.POST
+
+    if 'total_chapters' in data:
+        try:
+            total_chapters = int(data['total_chapters'])
+            if total_chapters >= 0:
+                class_subject.total_chapters = total_chapters
+        except (ValueError, TypeError):
+            return JsonResponse({"error": "Invalid total_chapters value."}, status=400)
+
+    if 'syllabus_overview' in data:
+        class_subject.syllabus_overview = data['syllabus_overview'].strip()
+
+    class_subject.save()
+
+    return JsonResponse({
+        "success": True,
+        "id": class_subject.id,
+        "total_chapters": class_subject.total_chapters,
+        "syllabus_overview": class_subject.syllabus_overview,
+    }, status=200)
+
 
 # ==============================================================================
 # Admin Orders & Sales Management Endpoints

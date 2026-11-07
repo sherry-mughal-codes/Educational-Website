@@ -65,7 +65,7 @@ export default async function ResourceDetailPage({ params }: PageProps) {
     encodingFormat: 'application/pdf',
     author: {
       '@type': 'Organization',
-      name: resource.author_attribution || 'FBISE Academic Panel',
+      name: 'FBISE Educational Portal',
     },
     inLanguage: 'en',
     isAccessibleForFree: true,
@@ -193,16 +193,6 @@ export default async function ResourceDetailPage({ params }: PageProps) {
               )}
             </div>
           </section>
-
-          {/* Academic Attribution */}
-          {resource.author_attribution && (
-            <section className="attribution-card">
-              <h3 className="attribution-title">Academic Source</h3>
-              <p className="attribution-text" style={{ margin: 0 }}>
-                Compiled by <strong>{resource.author_attribution}</strong> in alignment with FBISE matriculation standards.
-              </p>
-            </section>
-          )}
 
           {/* Genuine Related Resources */}
           {resource.related_resources && resource.related_resources.length > 0 && (

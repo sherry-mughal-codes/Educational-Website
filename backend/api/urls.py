@@ -60,6 +60,7 @@ urlpatterns = [
     path('admin/structure/', views.admin_structure_overview, name='admin_structure_overview'),
     path('admin/structure/subjects/', views.admin_create_subject, name='admin_create_subject'),
     path('admin/structure/chapters/', views.admin_create_chapter, name='admin_create_chapter'),
+    path('admin/structure/class-subjects/<int:class_subject_id>/', views.admin_update_class_subject, name='admin_update_class_subject'),
 
     # Interactive Learning & Chapter Practice Endpoints
     path('classes/<slug:class_slug>/<slug:subject_slug>/practice/', views.subject_practice_topics, name='subject_practice_topics'),

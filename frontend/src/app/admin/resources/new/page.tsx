@@ -38,7 +38,7 @@ export default function NewResourcePage() {
   const [description, setDescription] = useState('');
   const [contentPreview, setContentPreview] = useState('');
   const [pageCount, setPageCount] = useState<number>(0);
-  const [authorAttribution, setAuthorAttribution] = useState('FBISE Academic Panel & Subject Specialists');
+  const [authorAttribution, setAuthorAttribution] = useState('');
   const [isPublished, setIsPublished] = useState(true);
   const [price, setPrice] = useState('100.00');
   const [isFree, setIsFree] = useState(false);
@@ -113,6 +113,20 @@ export default function NewResourcePage() {
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/(^-|-$)+/g, '');
     setSlug(generatedSlug);
+  };
+
+  const handleAutoGenerateSummary = () => {
+    const cName = currentClass ? currentClass.name : 'Class';
+    const sName = availableClassSubjects.find((s) => String(s.subject_id) === selectedSubjectId)?.subject_name || 'Subject';
+    const chName = selectedChapterId
+      ? availableClassSubjects.find((s) => String(s.subject_id) === selectedSubjectId)?.chapters.find((ch) => String(ch.id) === selectedChapterId)?.title
+      : '';
+    const chPart = chName ? ` focused specifically on "${chName}"` : '';
+    const typeLabel = resourceType === 'model_paper' ? 'Model Paper & Solved Exercises' : resourceType === 'chapter_notes' ? 'Chapter Guide' : 'Complete Subject Notes';
+
+    const autoSummary = `Comprehensive ${cName} ${sName} study resource (${typeLabel})${chPart} prepared for Federal Board examination preparation.\n\nKey coverage includes:\n• Core conceptual explanations and essential definitions\n• Solved textbook review questions and numerical exercises\n• High-yield board exam preparation topics\n• Formulated strictly in accordance with the official Federal Board (FBISE) syllabus.`;
+
+    setContentPreview(autoSummary);
   };
 
   // Form submission
@@ -329,17 +343,28 @@ export default function NewResourcePage() {
             />
           </div>
 
-          {/* Content Preview */}
+          {/* Content Preview / Curriculum Scope & Summary */}
           <div className="form-group">
-            <label htmlFor="field-preview" className="form-label">
-              Content Overview / Syllabus Preview <span className="text-muted">(Optional)</span>
-            </label>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+              <label htmlFor="field-preview" className="form-label" style={{ margin: 0 }}>
+                Curriculum Scope &amp; Summary
+              </label>
+              <button
+                type="button"
+                onClick={handleAutoGenerateSummary}
+                className="btn-outline-sm"
+                style={{ fontSize: '0.75rem', padding: '0.2rem 0.55rem', fontWeight: 600, color: '#047857' }}
+                title="Automatically generate curriculum scope and summary based on selected class, subject, and resource details"
+              >
+                ✨ Auto-Generate Summary
+              </button>
+            </div>
             <textarea
               id="field-preview"
               rows={4}
               value={contentPreview}
               onChange={(e) => setContentPreview(e.target.value)}
-              placeholder="Detailed syllabus notes, chapter summary, key derivations, or examination tips..."
+              placeholder="Curriculum scope, key topics covered, solved exercise details, and examination highlights..."
               className="form-textarea"
             />
           </div>

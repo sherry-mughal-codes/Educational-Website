@@ -29,7 +29,7 @@ export const metadata: Metadata = {
     'chemistry notes',
     'mathematics solutions',
   ],
-  authors: [{ name: 'FBISE Prep Academic Panel' }],
+  authors: [{ name: 'FBISE Educational Preparation' }],
   robots: {
     index: true,
     follow: true,

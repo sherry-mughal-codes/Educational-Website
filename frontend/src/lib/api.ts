@@ -429,6 +429,23 @@ export async function adminCreateChapter(payload: {
   return { success: true, id: data.id };
 }
 
+export async function adminUpdateClassSubject(
+  classSubjectId: number,
+  payload: { total_chapters?: number; syllabus_overview?: string }
+): Promise<{ success: boolean; total_chapters?: number; syllabus_overview?: string; error?: string }> {
+  const res = await fetch(`${API_BASE}/api/admin/structure/class-subjects/${classSubjectId}/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    credentials: 'include',
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    return { success: false, error: data.error || 'Failed to update subject curriculum' };
+  }
+  return { success: true, total_chapters: data.total_chapters, syllabus_overview: data.syllabus_overview };
+}
+
 // ==============================================================================
 // Phase 4: Student Accounts & Dashboard API
 // ==============================================================================

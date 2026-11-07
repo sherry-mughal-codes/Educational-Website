@@ -68,16 +68,16 @@ export default async function SubjectPage({ params }: PageProps) {
 
       {/* Sleek Practice & Syllabus Action Bar */}
       <section style={{
-        margin: '1.25rem 0 1.75rem 0',
-        padding: '1.25rem 1.5rem',
-        borderRadius: '12px',
+        margin: '0.85rem 0 1.25rem 0',
+        padding: '0.9rem 1.15rem',
+        borderRadius: '10px',
         background: 'linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%)',
         border: '1px solid #a7f3d0',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
         flexWrap: 'wrap',
-        gap: '1rem',
+        gap: '0.75rem',
       }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>

@@ -92,6 +92,17 @@ export default function EditResourcePage() {
       });
   }, [resourceId]);
 
+  const handleAutoGenerateSummary = () => {
+    const cName = resource?.class?.name || 'Class';
+    const sName = resource?.subject?.name || 'Subject';
+    const chName = resource?.chapter?.title ? ` focused specifically on "${resource.chapter.title}"` : '';
+    const typeLabel = resourceType === 'model_paper' ? 'Model Paper & Solved Exercises' : resourceType === 'chapter_notes' ? 'Chapter Guide' : 'Complete Subject Notes';
+
+    const autoSummary = `Comprehensive ${cName} ${sName} study resource (${typeLabel})${chName} prepared for Federal Board examination preparation.\n\nKey coverage includes:\n• Core conceptual explanations and essential definitions\n• Solved textbook review questions and numerical exercises\n• High-yield board exam preparation topics\n• Formulated strictly in accordance with the official Federal Board (FBISE) syllabus.`;
+
+    setContentPreview(autoSummary);
+  };
+
   // Save metadata
   const handleSaveMetadata = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -402,15 +413,27 @@ export default function EditResourcePage() {
             </div>
 
             <div className="form-group">
-              <label htmlFor="edit-preview" className="form-label">
-                Curriculum Summary &amp; Study Notes Preview
-              </label>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                <label htmlFor="edit-preview" className="form-label" style={{ margin: 0 }}>
+                  Curriculum Scope &amp; Summary
+                </label>
+                <button
+                  type="button"
+                  onClick={handleAutoGenerateSummary}
+                  className="btn-outline-sm"
+                  style={{ fontSize: '0.75rem', padding: '0.2rem 0.55rem', fontWeight: 600, color: '#047857' }}
+                  title="Automatically generate curriculum scope and summary based on class, subject, and resource details"
+                >
+                  ✨ Auto-Generate Summary
+                </button>
+              </div>
               <textarea
                 id="edit-preview"
                 rows={5}
                 value={contentPreview}
                 onChange={(e) => setContentPreview(e.target.value)}
                 className="form-textarea"
+                placeholder="Curriculum scope, key topics covered, solved exercise details, and examination highlights..."
               />
             </div>
 

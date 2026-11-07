@@ -166,8 +166,9 @@ class Resource(models.Model):
     published_at = models.DateTimeField(null=True, blank=True)
     author_attribution = models.CharField(
         max_length=200,
-        default="FBISE Academic Panel & Subject Specialists",
-        help_text="Curriculum and review panel attribution"
+        default="",
+        blank=True,
+        help_text="Optional attribution note"
     )
     meta_title = models.CharField(max_length=200, blank=True, help_text="Custom SEO title if different from title")
     meta_description = models.CharField(max_length=300, blank=True, help_text="Custom SEO description")
@@ -186,6 +187,16 @@ class Resource(models.Model):
     def save(self, *args, **kwargs):
         if self.is_published and not self.published_at:
             self.published_at = timezone.now()
+        if not self.content_preview or not self.content_preview.strip():
+            cls_name = self.class_subject.class_level.name if self.class_subject else "Matriculation"
+            sub_name = self.class_subject.subject.name if self.class_subject else "Subject"
+            type_display = self.get_resource_type_display() if hasattr(self, 'get_resource_type_display') else "Study Notes"
+            ch_info = f" for {self.chapter.title}" if self.chapter else ""
+            self.content_preview = (
+                f"Complete {cls_name} {sub_name} {type_display.lower()}{ch_info} formulated strictly in accordance with "
+                f"the Federal Board (FBISE) matriculation curriculum. Includes conceptual topic summaries, solved textbook "
+                f"exercises, key definitions, and revision self-test questions."
+            )
         super().save(*args, **kwargs)
 
     def get_meta_title(self):
