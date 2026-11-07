@@ -210,8 +210,8 @@ export default function CheckoutPage() {
         setIsSubmitting(false);
         setProcessingStep(null);
       }
-    } catch {
-      setErrorMessage('A network error occurred while establishing your checkout session. Please try again.');
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'A network error occurred while establishing your checkout session. Please try again.');
       setIsSubmitting(false);
       setProcessingStep(null);
     }

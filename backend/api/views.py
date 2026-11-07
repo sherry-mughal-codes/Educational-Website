@@ -1013,7 +1013,7 @@ def payment_callback(request, gateway_name):
         return JsonResponse({"error": "Missing order reference in callback payload."}, status=400)
 
     try:
-        order = Order.objects.select_for_update().get(order_reference=order_ref)
+        order = Order.objects.get(order_reference=order_ref)
     except Order.DoesNotExist:
         return JsonResponse({"error": f"Order {order_ref} not found."}, status=404)
 
@@ -1021,6 +1021,7 @@ def payment_callback(request, gateway_name):
     verification = gateway.verify_payment(data, order=order)
 
     with transaction.atomic():
+        order = Order.objects.select_for_update().get(id=order.id)
         if verification.is_valid and verification.is_paid:
             if order.status != 'paid':
                 order.status = 'paid'

@@ -675,17 +675,26 @@ export async function createOrder(payload: {
   };
   error?: string;
 }> {
-  const res = await fetch(`${API_BASE}/api/orders/create/`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-    credentials: 'include',
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    return { success: false, error: data.error || 'Failed to create order' };
+  try {
+    const res = await fetch(`${API_BASE}/api/orders/create/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      credentials: 'include',
+    });
+    let data: any = {};
+    try {
+      data = await res.json();
+    } catch {
+      return { success: false, error: `Server error (${res.status}). Please try again.` };
+    }
+    if (!res.ok) {
+      return { success: false, error: data.error || 'Failed to create order' };
+    }
+    return data;
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to connect to order service' };
   }
-  return data;
 }
 
 export async function getOrderStatus(orderReference: string): Promise<{
@@ -718,17 +727,26 @@ export async function submitPaymentCallback(gateway: string, payload: Record<str
   status?: string;
   error?: string;
 }> {
-  const res = await fetch(`${API_BASE}/api/payments/callback/${encodeURIComponent(gateway)}/`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-    credentials: 'include',
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    return { success: false, error: data.error || 'Payment processing failed' };
+  try {
+    const res = await fetch(`${API_BASE}/api/payments/callback/${encodeURIComponent(gateway)}/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      credentials: 'include',
+    });
+    let data: any = {};
+    try {
+      data = await res.json();
+    } catch {
+      return { success: false, error: `Payment gateway error (${res.status}). Please try again.` };
+    }
+    if (!res.ok) {
+      return { success: false, error: data.error || 'Payment processing failed' };
+    }
+    return data;
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Payment network request failed' };
   }
-  return data;
 }
 
 export async function sandboxSimulatePay(orderReference: string): Promise<{ success: boolean; status?: string; error?: string }> {
