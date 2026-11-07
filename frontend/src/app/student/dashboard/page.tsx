@@ -123,11 +123,11 @@ export default function StudentDashboardPage() {
       {/* Interactive Practice & Chapter Mastery Section */}
       <section className="dashboard-section" style={{
         background: '#ffffff',
-        borderRadius: '16px',
+        borderRadius: '12px',
         border: '1px solid #e2e8f0',
-        padding: '1.75rem',
-        marginBottom: '2rem',
-        boxShadow: '0 2px 4px rgba(0, 0, 0, 0.02)',
+        padding: '1.15rem',
+        marginBottom: '1.25rem',
+        boxShadow: '0 1px 3px rgba(0, 0, 0, 0.02)',
       }}>
         <div style={{
           display: 'flex',

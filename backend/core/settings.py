@@ -169,17 +169,21 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
 # Frontend URL
 FRONTEND_BASE_URL = os.environ.get('FRONTEND_BASE_URL', 'http://localhost:3001')
 
-# Email Configuration
-EMAIL_BACKEND = os.environ.get(
-    'EMAIL_BACKEND',
-    'django.core.mail.backends.console.EmailBackend' if DEBUG else 'django.core.mail.backends.smtp.EmailBackend'
-)
-EMAIL_HOST = os.environ.get('EMAIL_HOST', 'localhost')
+# Email Configuration (Real-Time SMTP Relay or Console Fallback)
+EMAIL_HOST = os.environ.get('EMAIL_HOST', 'smtp.gmail.com')
 EMAIL_PORT = int(os.environ.get('EMAIL_PORT', '587'))
 EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'true').strip().lower() in ('1', 'true', 'yes')
-EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
-EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
-DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'FBISE Study Notes <noreply@fbise-notes.local>')
+EMAIL_USE_SSL = os.environ.get('EMAIL_USE_SSL', 'false').strip().lower() in ('1', 'true', 'yes')
+EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '').strip()
+EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '').strip()
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'FBISE Study Notes <noreply@fbise-notes.local>')
+EMAIL_TIMEOUT = int(os.environ.get('EMAIL_TIMEOUT', '10'))
+
+# If EMAIL_BACKEND is explicitly defined in environment, use that.
+# Otherwise, if EMAIL_HOST_USER is configured, use smtp.EmailBackend for real delivery;
+# fallback to console backend if no SMTP user has been supplied yet.
+_default_backend = 'django.core.mail.backends.smtp.EmailBackend' if EMAIL_HOST_USER else 'django.core.mail.backends.console.EmailBackend'
+EMAIL_BACKEND = os.environ.get('EMAIL_BACKEND', _default_backend)
 PASSWORD_RESET_TIMEOUT = 259200  # 3 days in seconds
 
 # Payment Gateway Configuration (Pakistan: JazzCash, Easypaisa, Sandbox)

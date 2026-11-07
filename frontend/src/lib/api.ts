@@ -712,6 +712,25 @@ export async function getOrderStatus(orderReference: string): Promise<{
   });
 }
 
+export async function submitPaymentCallback(gateway: string, payload: Record<string, any>): Promise<{
+  success: boolean;
+  order_reference?: string;
+  status?: string;
+  error?: string;
+}> {
+  const res = await fetch(`${API_BASE}/api/payments/${encodeURIComponent(gateway)}/callback/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    credentials: 'include',
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    return { success: false, error: data.error || 'Payment processing failed' };
+  }
+  return data;
+}
+
 export async function sandboxSimulatePay(orderReference: string): Promise<{ success: boolean; status?: string; error?: string }> {
   const res = await fetch(`${API_BASE}/api/payments/sandbox-pay/`, {
     method: 'POST',
