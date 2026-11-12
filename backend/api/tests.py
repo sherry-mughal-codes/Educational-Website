@@ -3,6 +3,9 @@ from decimal import Decimal
 from io import BytesIO
 from django.test import TestCase, Client
 from django.contrib.auth.models import User
+from django.contrib.auth.tokens import default_token_generator
+from django.utils.http import urlsafe_base64_encode
+from django.utils.encoding import force_bytes
 from django.core.files.uploadedfile import SimpleUploadedFile
 from .models import (
     ClassLevel, Subject, ClassSubject, Chapter, Resource,
@@ -1122,5 +1125,210 @@ class InteractivePracticeTests(TestCase):
         }, content_type='application/json')
         self.assertEqual(bulk_resp.status_code, 201)
         self.assertEqual(bulk_resp.json()['created_count'], 1)
+
+
+class EmailVerificationTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.user = User.objects.create_user(
+            username='verify_student@example.com',
+            email='verify_student@example.com',
+            password='Password123!',
+            first_name='Verify Student'
+        )
+        self.profile = StudentProfile.objects.create(user=self.user, is_email_verified=False)
+
+    def test_verify_email_success(self):
+        token = default_token_generator.make_token(self.user)
+        uid = urlsafe_base64_encode(force_bytes(self.user.pk))
+        resp = self.client.post('/api/auth/verify-email/', {
+            'uid': uid,
+            'token': token
+        }, content_type='application/json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['success'])
+        self.profile.refresh_from_db()
+        self.assertTrue(self.profile.is_email_verified)
+        self.assertIsNotNone(self.profile.verified_at)
+
+    def test_verify_email_invalid_token(self):
+        uid = urlsafe_base64_encode(force_bytes(self.user.pk))
+        resp = self.client.post('/api/auth/verify-email/', {
+            'uid': uid,
+            'token': 'invalid-token-123'
+        }, content_type='application/json')
+        self.assertEqual(resp.status_code, 400)
+        self.profile.refresh_from_db()
+        self.assertFalse(self.profile.is_email_verified)
+
+
+class DirectTransferAndOrderApprovalTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.student = User.objects.create_user(
+            username='dt_student@example.com',
+            email='dt_student@example.com',
+            password='Password123!',
+            first_name='DT Student'
+        )
+        StudentProfile.objects.create(user=self.student, is_email_verified=True)
+
+        self.staff_admin = User.objects.create_user(
+            username='admin_auditor@example.com',
+            email='admin_auditor@example.com',
+            password='AdminPassword123!',
+            is_staff=True
+        )
+
+        self.class_level = ClassLevel.objects.create(name='Class 9', slug='class-9', grade_number=9)
+        self.subject = Subject.objects.create(name='Chemistry', slug='chemistry', code='CHM')
+        self.cs = ClassSubject.objects.create(class_level=self.class_level, subject=self.subject)
+        self.resource = Resource.objects.create(
+            class_subject=self.cs,
+            title='Class 9 Chemistry Notes',
+            slug='class-9-chemistry-notes',
+            is_free=False,
+            price=Decimal('150.00'),
+            is_published=True
+        )
+
+    def test_direct_transfer_creates_pending_verification_order(self):
+        self.client.force_login(self.student)
+        create_resp = self.client.post('/api/orders/create/', {
+            'resource_id': self.resource.id,
+            'payment_gateway': 'direct_transfer'
+        }, content_type='application/json')
+        self.assertEqual(create_resp.status_code, 201)
+        order_ref = create_resp.json()['order_reference']
+
+        # Submit TID callback
+        cb_resp = self.client.post('/api/payments/callback/direct_transfer/', {
+            'order_reference': order_ref,
+            'transaction_id': 'TXN987654321',
+            'sender_phone': '03001234567',
+        }, content_type='application/json')
+        self.assertEqual(cb_resp.status_code, 200)
+        self.assertEqual(cb_resp.json()['status'], 'pending_verification')
+
+        order = Order.objects.get(order_reference=order_ref)
+        self.assertEqual(order.status, 'pending_verification')
+        self.assertEqual(order.transaction_id, 'TXN987654321')
+        self.assertEqual(order.sender_phone, '03001234567')
+        # Purchase access must NOT be unlocked yet
+        self.assertFalse(Purchase.objects.filter(order=order).exists())
+
+    def test_admin_can_approve_order_and_unlock_purchase(self):
+        order = Order.objects.create(
+            order_reference='ORD-APPROVE-TEST-001',
+            student=self.student,
+            resource=self.resource,
+            amount=Decimal('150.00'),
+            payment_gateway='direct_transfer',
+            status='pending_verification',
+            transaction_id='TID-VALID-123',
+            sender_phone='03001234567'
+        )
+
+        # Unauthenticated / student request must be rejected
+        self.client.force_login(self.student)
+        forbidden_resp = self.client.post(f'/api/admin/orders/{order.id}/approve/')
+        self.assertEqual(forbidden_resp.status_code, 403)
+
+        # Admin approves order
+        self.client.force_login(self.staff_admin)
+        approve_resp = self.client.post(f'/api/admin/orders/{order.id}/approve/')
+        self.assertEqual(approve_resp.status_code, 200)
+
+        order.refresh_from_db()
+        self.assertEqual(order.status, 'paid')
+        self.assertEqual(order.verified_by, self.staff_admin)
+        self.assertIsNotNone(order.verified_at)
+
+        # Purchase grant must now be active
+        purchase = Purchase.objects.get(order=order)
+        self.assertTrue(purchase.is_active)
+        self.assertEqual(purchase.student, self.student)
+
+    def test_admin_can_reject_order_with_audit_reason(self):
+        order = Order.objects.create(
+            order_reference='ORD-REJECT-TEST-001',
+            student=self.student,
+            resource=self.resource,
+            amount=Decimal('150.00'),
+            payment_gateway='direct_transfer',
+            status='pending_verification',
+            transaction_id='TID-FAKE-999',
+            sender_phone='03001234567'
+        )
+
+        self.client.force_login(self.staff_admin)
+        reject_resp = self.client.post(f'/api/admin/orders/{order.id}/reject/', {
+            'reason': 'TID not found in official bank statement.'
+        }, content_type='application/json')
+        self.assertEqual(reject_resp.status_code, 200)
+
+        order.refresh_from_db()
+        self.assertEqual(order.status, 'rejected')
+        self.assertEqual(order.verified_by, self.staff_admin)
+        self.assertEqual(order.rejection_reason, 'TID not found in official bank statement.')
+        self.assertFalse(Purchase.objects.filter(order=order).exists())
+
+
+class PracticeSessionIntegrityTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.student_a = User.objects.create_user(username='student_a@example.com', email='student_a@example.com', password='Password123!')
+        self.student_b = User.objects.create_user(username='student_b@example.com', email='student_b@example.com', password='Password123!')
+
+        self.class_level = ClassLevel.objects.create(name='Class 9', slug='class-9', grade_number=9)
+        self.subject = Subject.objects.create(name='Physics', slug='physics', code='PHY')
+        self.cs = ClassSubject.objects.create(class_level=self.class_level, subject=self.subject)
+        self.chapter = Chapter.objects.create(class_subject=self.cs, chapter_number=1, title='Physical Quantities', slug='physical-quantities')
+        self.topic = PracticeTopic.objects.create(chapter=self.chapter, title='Kinematics Basics', slug='kinematics-basics', is_published=True)
+        self.question = Question.objects.create(
+            topic=self.topic,
+            question_type='mcq',
+            prompt='What is the SI unit of velocity?',
+            points=10,
+            is_published=True
+        )
+        self.opt_correct = QuestionOption.objects.create(question=self.question, option_text='m/s', is_correct=True, order=1)
+        self.opt_wrong = QuestionOption.objects.create(question=self.question, option_text='m/s^2', is_correct=False, order=2)
+
+    def test_student_session_cannot_be_hijacked_by_other_user(self):
+        self.client.force_login(self.student_a)
+        start_resp = self.client.post(f'/api/practice/topics/{self.topic.slug}/start/', {}, content_type='application/json')
+        sess_uuid = start_resp.json()['session_uuid']
+
+        # Student B attempts to submit answer to Student A's session
+        self.client.force_login(self.student_b)
+        hijack_resp = self.client.post(f'/api/practice/questions/{self.question.id}/submit/', {
+            'session_uuid': sess_uuid,
+            'selected_option_id': self.opt_correct.id
+        }, content_type='application/json')
+        self.assertEqual(hijack_resp.status_code, 403)
+
+    def test_completed_session_rejects_further_answers(self):
+        self.client.force_login(self.student_a)
+        start_resp = self.client.post(f'/api/practice/topics/{self.topic.slug}/start/', {}, content_type='application/json')
+        sess_uuid = start_resp.json()['session_uuid']
+
+        # Submit answer
+        self.client.post(f'/api/practice/questions/{self.question.id}/submit/', {
+            'session_uuid': sess_uuid,
+            'selected_option_id': self.opt_correct.id
+        }, content_type='application/json')
+
+        # Finish session
+        finish_resp = self.client.post(f'/api/practice/sessions/{sess_uuid}/finish/')
+        self.assertEqual(finish_resp.status_code, 200)
+
+        # Attempt to submit another answer after completion
+        tamper_resp = self.client.post(f'/api/practice/questions/{self.question.id}/submit/', {
+            'session_uuid': sess_uuid,
+            'selected_option_id': self.opt_wrong.id
+        }, content_type='application/json')
+        self.assertEqual(tamper_resp.status_code, 400)
+
 
 

@@ -4,19 +4,35 @@ import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import AdminNav from '@/components/AdminNav';
-import { adminGetOrders, adminRefundOrder, adminGetMe, OrderItem } from '@/lib/api';
+import {
+  adminGetOrders,
+  adminApproveOrder,
+  adminRejectOrder,
+  adminRefundOrder,
+  adminGetMe,
+  OrderItem,
+} from '@/lib/api';
 
 export default function AdminOrdersPage() {
   const router = useRouter();
   const [orders, setOrders] = useState<OrderItem[]>([]);
   const [totalOrders, setTotalOrders] = useState(0);
   const [paidOrdersCount, setPaidOrdersCount] = useState(0);
+  const [pendingVerificationCount, setPendingVerificationCount] = useState(0);
   const [totalRevenue, setTotalRevenue] = useState('0.00');
 
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [gatewayFilter, setGatewayFilter] = useState('');
+
+  // Modals state
+  const [selectedOrderForApprove, setSelectedOrderForApprove] = useState<OrderItem | null>(null);
+  const [isProcessingApprove, setIsProcessingApprove] = useState(false);
+
+  const [selectedOrderForReject, setSelectedOrderForReject] = useState<OrderItem | null>(null);
+  const [rejectionReason, setRejectionReason] = useState('Transaction ID not found in bank ledger or amount mismatched.');
+  const [isProcessingReject, setIsProcessingReject] = useState(false);
 
   const [selectedOrderForRefund, setSelectedOrderForRefund] = useState<OrderItem | null>(null);
   const [refundReason, setRefundReason] = useState('Customer requested refund / duplicate charge');
@@ -52,6 +68,7 @@ export default function AdminOrdersPage() {
         setOrders(data.orders || []);
         setTotalOrders(data.total_orders || 0);
         setPaidOrdersCount(data.paid_orders_count || 0);
+        setPendingVerificationCount(data.pending_verification_count || 0);
         setTotalRevenue(data.total_revenue_pkr || '0.00');
       }
     } catch {
@@ -68,6 +85,48 @@ export default function AdminOrdersPage() {
     return () => clearTimeout(timer);
   }, [loadOrders]);
 
+  const handleConfirmApprove = async () => {
+    if (!selectedOrderForApprove) return;
+
+    setIsProcessingApprove(true);
+    try {
+      const res = await adminApproveOrder(selectedOrderForApprove.id);
+      if (res.success) {
+        setSuccessMessage(`Order ${selectedOrderForApprove.order_reference} approved successfully. Student download access unlocked.`);
+        setSelectedOrderForApprove(null);
+        loadOrders();
+        setTimeout(() => setSuccessMessage(null), 5000);
+      } else {
+        setErrorMessage(res.error || 'Failed to approve order.');
+      }
+    } catch {
+      setErrorMessage('Network error approving payment.');
+    } finally {
+      setIsProcessingApprove(false);
+    }
+  };
+
+  const handleConfirmReject = async () => {
+    if (!selectedOrderForReject) return;
+
+    setIsProcessingReject(true);
+    try {
+      const res = await adminRejectOrder(selectedOrderForReject.id, rejectionReason);
+      if (res.success) {
+        setSuccessMessage(`Order ${selectedOrderForReject.order_reference} marked as rejected.`);
+        setSelectedOrderForReject(null);
+        loadOrders();
+        setTimeout(() => setSuccessMessage(null), 5000);
+      } else {
+        setErrorMessage(res.error || 'Failed to reject order.');
+      }
+    } catch {
+      setErrorMessage('Network error rejecting payment.');
+    } finally {
+      setIsProcessingReject(false);
+    }
+  };
+
   const handleConfirmRefund = async () => {
     if (!selectedOrderForRefund) return;
 
@@ -78,7 +137,7 @@ export default function AdminOrdersPage() {
         setSuccessMessage(`Order ${selectedOrderForRefund.order_reference} marked as refunded and access revoked.`);
         setSelectedOrderForRefund(null);
         loadOrders();
-        setTimeout(() => setSuccessMessage(null), 4000);
+        setTimeout(() => setSuccessMessage(null), 5000);
       } else {
         setErrorMessage(res.error || 'Failed to refund order.');
       }
@@ -97,15 +156,33 @@ export default function AdminOrdersPage() {
         <div className="admin-header-row">
           <div>
             <h1 className="admin-heading">Orders &amp; Sales Management</h1>
-            <p className="admin-subheading-badges">
+            <p className="admin-subheading-badges" style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', marginTop: '0.35rem' }}>
               <span className="badge-pill badge-neutral">Total Orders: {totalOrders}</span>
               <span className="badge-pill badge-neutral">Paid: {paidOrdersCount}</span>
+              {pendingVerificationCount > 0 && (
+                <span
+                  className="badge-pill"
+                  style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a', fontWeight: 700 }}
+                >
+                  ⏳ Pending Verification: {pendingVerificationCount}
+                </span>
+              )}
               <span className="badge-pill badge-type">Revenue: PKR {totalRevenue}</span>
             </p>
           </div>
-          <Link href="/admin/resources/" className="btn-outline-sm" title="Manage resources catalog">
-            ← Manage Resources
-          </Link>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <Link
+              href="/admin/pages/?tab=payment"
+              className="btn-outline-sm"
+              title="Configure receiving bank/wallet accounts and checkout instructions"
+              style={{ fontWeight: 700, color: '#047857', borderColor: '#047857' }}
+            >
+              ⚙️ Receiving Accounts &amp; Steps
+            </Link>
+            <Link href="/admin/resources/" className="btn-outline-sm" title="Manage resources catalog">
+              ← Manage Resources
+            </Link>
+          </div>
         </div>
 
         {/* Status Alerts */}
@@ -131,7 +208,7 @@ export default function AdminOrdersPage() {
             <input
               id="order-search"
               type="text"
-              placeholder="Search by order ref, student email, or resource..."
+              placeholder="Search by order ref, TID, phone, student, or resource..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="form-input"
@@ -149,8 +226,10 @@ export default function AdminOrdersPage() {
               className="form-select"
             >
               <option value="">All Statuses</option>
+              <option value="pending_verification">Pending Verification (Needs Approval)</option>
               <option value="paid">Paid (Verified)</option>
-              <option value="pending">Pending Payment</option>
+              <option value="rejected">Rejected</option>
+              <option value="pending">Pending Checkout</option>
               <option value="failed">Failed / Cancelled</option>
               <option value="refunded">Refunded</option>
             </select>
@@ -167,6 +246,7 @@ export default function AdminOrdersPage() {
               className="form-select"
             >
               <option value="">All Gateways</option>
+              <option value="direct_transfer">Direct Transfer / TID</option>
               <option value="jazzcash">JazzCash</option>
               <option value="easypaisa">Easypaisa</option>
               <option value="sandbox">Sandbox (Test)</option>
@@ -190,7 +270,7 @@ export default function AdminOrdersPage() {
             <table className="admin-table">
               <thead>
                 <tr>
-                  <th scope="col">Order Reference</th>
+                  <th scope="col">Order Reference / TID</th>
                   <th scope="col">Student</th>
                   <th scope="col">Resource</th>
                   <th scope="col">Amount</th>
@@ -205,8 +285,20 @@ export default function AdminOrdersPage() {
                   <tr key={o.id}>
                     <td>
                       <code className="order-code">{o.order_reference}</code>
-                      {o.gateway_reference && (
-                        <div className="text-muted text-xs">Txn: {o.gateway_reference}</div>
+                      {o.transaction_id && (
+                        <div style={{ fontSize: '0.72rem', color: '#1e40af', fontWeight: 600 }}>
+                          TID: {o.transaction_id}
+                        </div>
+                      )}
+                      {o.sender_phone && (
+                        <div style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                          Phone: {o.sender_phone}
+                        </div>
+                      )}
+                      {o.customer_note && (
+                        <div style={{ fontSize: '0.72rem', color: '#065f46', background: '#ecfdf5', padding: '0.2rem 0.45rem', borderRadius: '4px', marginTop: '0.25rem', border: '1px solid #a7f3d0', lineHeight: 1.3 }}>
+                          📝 <strong>Note:</strong> {o.customer_note}
+                        </div>
                       )}
                     </td>
                     <td>
@@ -231,18 +323,27 @@ export default function AdminOrdersPage() {
                         className={`status-pill ${
                           o.status === 'paid'
                             ? 'pill-success'
-                            : o.status === 'pending'
+                            : o.status === 'pending_verification'
                             ? 'pill-draft'
+                            : o.status === 'rejected'
+                            ? 'pill-failed'
                             : o.status === 'refunded'
                             ? 'pill-refunded'
                             : 'pill-failed'
                         }`}
+                        style={
+                          o.status === 'pending_verification'
+                            ? { background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a' }
+                            : undefined
+                        }
                       >
-                        {o.status_display}
+                        {o.status === 'pending_verification'
+                          ? '⏳ Needs Verification'
+                          : o.status_display}
                       </span>
                     </td>
                     <td>
-                      <span className="text-muted">
+                      <span className="text-muted" style={{ fontSize: '0.78rem' }}>
                         {new Date(o.created_at).toLocaleDateString('en-PK', {
                           day: 'numeric',
                           month: 'short',
@@ -251,6 +352,42 @@ export default function AdminOrdersPage() {
                       </span>
                     </td>
                     <td className="text-right">
+                      {o.status === 'pending_verification' && (
+                        <div style={{ display: 'flex', gap: '0.35rem', justifyContent: 'flex-end' }}>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedOrderForApprove(o)}
+                            className="btn-outline-sm"
+                            style={{
+                              background: '#ecfdf5',
+                              borderColor: '#a7f3d0',
+                              color: '#065f46',
+                              fontWeight: 700,
+                              fontSize: '0.75rem',
+                              padding: '0.25rem 0.5rem',
+                            }}
+                            title="Verify and unlock student download access"
+                          >
+                            ✓ Approve
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedOrderForReject(o)}
+                            className="btn-outline-sm"
+                            style={{
+                              background: '#fef2f2',
+                              borderColor: '#fecaca',
+                              color: '#991b1b',
+                              fontSize: '0.75rem',
+                              padding: '0.25rem 0.5rem',
+                            }}
+                            title="Reject invalid transaction ID"
+                          >
+                            ✗ Reject
+                          </button>
+                        </div>
+                      )}
+
                       {o.status === 'paid' && (
                         <button
                           type="button"
@@ -261,6 +398,12 @@ export default function AdminOrdersPage() {
                           Revoke / Refund
                         </button>
                       )}
+
+                      {o.status === 'rejected' && o.rejection_reason && (
+                        <span style={{ fontSize: '0.72rem', color: '#991b1b' }} title={o.rejection_reason}>
+                          Rejected
+                        </span>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -269,6 +412,111 @@ export default function AdminOrdersPage() {
           )}
         </div>
       </main>
+
+      {/* Approve Modal */}
+      {selectedOrderForApprove && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-approve-title">
+          <div className="modal-box">
+            <h3 id="modal-approve-title" className="modal-title" style={{ color: '#065f46' }}>
+              ✓ Confirm Bank Transfer &amp; Unlock Access
+            </h3>
+            <p className="modal-text">
+              Order: <strong>{selectedOrderForApprove.order_reference}</strong> ({selectedOrderForApprove.student_email})
+            </p>
+            <div style={{ background: '#f8fafc', padding: '0.75rem', borderRadius: '6px', border: '1px solid #cbd5e1', marginBottom: '0.85rem', fontSize: '0.825rem' }}>
+              <div>Amount to Verify: <strong>PKR {selectedOrderForApprove.amount}</strong></div>
+              <div>Submitted TID: <strong style={{ color: '#1e40af' }}>{selectedOrderForApprove.transaction_id || 'Not provided (Optional)'}</strong></div>
+              <div>Sender Mobile: <strong>{selectedOrderForApprove.sender_phone || 'None'}</strong></div>
+              <div>Study Guide: <strong>{selectedOrderForApprove.resource_title}</strong></div>
+              {selectedOrderForApprove.customer_note && (
+                <div style={{ marginTop: '0.4rem', paddingTop: '0.4rem', borderTop: '1px dashed #cbd5e1', color: '#065f46' }}>
+                  📝 Customer Note: <strong>&quot;{selectedOrderForApprove.customer_note}&quot;</strong>
+                </div>
+              )}
+            </div>
+            <p className="modal-warning" style={{ fontSize: '0.8rem' }}>
+              Confirm that the submitted TID matches your official JazzCash, Easypaisa, or Bank statement. Approving will immediately unlock download access for the student and dispatch an email confirmation.
+            </p>
+
+            <div className="modal-actions">
+              <button
+                type="button"
+                onClick={() => setSelectedOrderForApprove(null)}
+                className="btn-outline-sm"
+                disabled={isProcessingApprove}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmApprove}
+                className="btn-primary"
+                style={{ background: '#047857' }}
+                disabled={isProcessingApprove}
+              >
+                {isProcessingApprove ? 'Verifying...' : 'Confirm & Unlock Access'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reject Modal */}
+      {selectedOrderForReject && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-reject-title">
+          <div className="modal-box">
+            <h3 id="modal-reject-title" className="modal-title" style={{ color: '#991b1b' }}>
+              ✗ Reject Payment Verification
+            </h3>
+            <p className="modal-text">
+              Order: <strong>{selectedOrderForReject.order_reference}</strong> ({selectedOrderForReject.student_email})
+            </p>
+            <div style={{ background: '#fef2f2', padding: '0.65rem', borderRadius: '6px', border: '1px solid #fecaca', marginBottom: '0.85rem', fontSize: '0.8rem' }}>
+              <div>TID: <strong>{selectedOrderForReject.transaction_id || 'Not provided'}</strong></div>
+              <div>Amount: <strong>PKR {selectedOrderForReject.amount}</strong></div>
+              <div>Sender Phone: <strong>{selectedOrderForReject.sender_phone || 'None'}</strong></div>
+              {selectedOrderForReject.customer_note && (
+                <div style={{ marginTop: '0.35rem', paddingTop: '0.35rem', borderTop: '1px dashed #fecaca', color: '#991b1b' }}>
+                  📝 Customer Note: <strong>&quot;{selectedOrderForReject.customer_note}&quot;</strong>
+                </div>
+              )}
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="reject-reason" className="form-label" style={{ fontSize: '0.8rem', fontWeight: 600 }}>
+                Rejection Reason (Dispatched to Student via Email):
+              </label>
+              <textarea
+                id="reject-reason"
+                rows={2}
+                value={rejectionReason}
+                onChange={(e) => setRejectionReason(e.target.value)}
+                className="form-textarea"
+                style={{ fontSize: '0.825rem' }}
+              />
+            </div>
+
+            <div className="modal-actions">
+              <button
+                type="button"
+                onClick={() => setSelectedOrderForReject(null)}
+                className="btn-outline-sm"
+                disabled={isProcessingReject}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmReject}
+                className="btn-danger"
+                disabled={isProcessingReject}
+              >
+                {isProcessingReject ? 'Rejecting...' : 'Confirm Rejection'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Refund / Revocation Modal */}
       {selectedOrderForRefund && (
@@ -322,4 +570,3 @@ export default function AdminOrdersPage() {
     </div>
   );
 }
-

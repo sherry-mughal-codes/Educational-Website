@@ -533,6 +533,14 @@ export interface OrderItem {
   class_name?: string;
   subject_name?: string;
   gateway_reference?: string;
+  transaction_id?: string;
+  sender_phone?: string;
+  customer_note?: string;
+  verified_by?: string | null;
+  verified_at?: string | null;
+  rejection_reason?: string;
+  refund_status?: string;
+  refund_reason?: string;
 }
 
 export interface GatewayItem {
@@ -639,6 +647,41 @@ export async function studentConfirmPasswordReset(payload: {
   return { success: true, message: data.message };
 }
 
+export async function studentVerifyEmail(uid: string, token: string): Promise<{ success: boolean; message?: string; error?: string }> {
+  try {
+    const res = await fetch(`${API_BASE}/api/auth/verify-email/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uid, token }),
+      credentials: 'include',
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      return { success: false, error: data.error || 'Email verification failed.' };
+    }
+    return { success: true, message: data.message };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Network error verifying email.' };
+  }
+}
+
+export async function studentResendVerification(): Promise<{ success: boolean; message?: string; error?: string }> {
+  try {
+    const res = await fetch(`${API_BASE}/api/auth/resend-verification/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      return { success: false, error: data.error || 'Failed to resend verification email.' };
+    }
+    return { success: true, message: data.message };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Network error requesting verification email.' };
+  }
+}
+
 export async function studentGetDashboard(): Promise<StudentDashboardData | null> {
   return await fetchApi<StudentDashboardData>('/api/student/dashboard/', {
     cache: 'no-store',
@@ -660,6 +703,7 @@ export async function createOrder(payload: {
   resource_slug?: string;
   gateway_id?: string;
   return_url?: string;
+  customer_note?: string;
 }): Promise<{
   success: boolean;
   already_owned?: boolean;
@@ -773,6 +817,7 @@ export async function adminGetOrders(filters: {
 } = {}): Promise<{
   total_orders: number;
   paid_orders_count: number;
+  pending_verification_count?: number;
   total_revenue_pkr: string;
   orders: OrderItem[];
 } | null> {
@@ -785,6 +830,41 @@ export async function adminGetOrders(filters: {
   return await fetchApi(`/api/admin/orders/${qs}`, {
     cache: 'no-store',
   });
+}
+
+export async function adminApproveOrder(orderId: number | string): Promise<{ success: boolean; message?: string; error?: string }> {
+  try {
+    const res = await fetch(`${API_BASE}/api/admin/orders/${orderId}/approve/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      return { success: false, error: data.error || 'Failed to approve order' };
+    }
+    return { success: true, message: data.message };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Network error approving order' };
+  }
+}
+
+export async function adminRejectOrder(orderId: number | string, reason: string): Promise<{ success: boolean; message?: string; error?: string }> {
+  try {
+    const res = await fetch(`${API_BASE}/api/admin/orders/${orderId}/reject/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason }),
+      credentials: 'include',
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      return { success: false, error: data.error || 'Failed to reject order' };
+    }
+    return { success: true, message: data.message };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Network error rejecting order' };
+  }
 }
 
 export async function adminRefundOrder(orderId: number | string, reason: string): Promise<{ success: boolean; message?: string; error?: string }> {
@@ -1269,6 +1349,40 @@ export async function adminUpdatePageContent(
     return { success: false, error: err?.message || 'Network error updating page.' };
   }
 }
+
+export interface PaymentAccountItem {
+  id: string;
+  provider: string;
+  account_title: string;
+  account_number: string;
+  iban?: string;
+  is_active: boolean;
+  notes?: string;
+}
+
+export interface PaymentSettingsResponse {
+  success: boolean;
+  title: string;
+  subtitle: string;
+  whatsapp_number: string;
+  instructions_steps: string[];
+  notice_text: string;
+  accounts: PaymentAccountItem[];
+  updated_at?: string;
+}
+
+export async function getPaymentSettings(): Promise<PaymentSettingsResponse | null> {
+  try {
+    const res = await fetch(`${API_BASE}/api/payments/settings/`, {
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
 
 
 

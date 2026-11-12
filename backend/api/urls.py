@@ -22,6 +22,8 @@ urlpatterns = [
     path('auth/login/', views.student_login, name='student_login'),
     path('auth/logout/', views.student_logout, name='student_logout'),
     path('auth/me/', views.student_me, name='student_me'),
+    path('auth/verify-email/', views.student_verify_email, name='student_verify_email'),
+    path('auth/resend-verification/', views.student_resend_verification, name='student_resend_verification'),
     path('auth/password-reset/', views.student_password_reset_request, name='student_password_reset'),
     path('auth/password-reset-confirm/', views.student_password_reset_confirm, name='student_password_reset_confirm'),
     # Aliases
@@ -29,6 +31,8 @@ urlpatterns = [
     path('student/login/', views.student_login, name='student_login_alias'),
     path('student/logout/', views.student_logout, name='student_logout_alias'),
     path('student/me/', views.student_me, name='student_me_alias'),
+    path('student/verify-email/', views.student_verify_email, name='student_verify_email_alias'),
+    path('student/resend-verification/', views.student_resend_verification, name='student_resend_verification_alias'),
 
     # Student Dashboard
     path('student/dashboard/', views.student_dashboard, name='student_dashboard'),
@@ -41,6 +45,7 @@ urlpatterns = [
     path('payments/callback/<str:gateway_name>/', views.payment_callback, name='payment_callback'),
     path('payments/<str:gateway_name>/callback/', views.payment_callback, name='payment_callback_alias'),
     path('payments/sandbox-pay/', views.sandbox_simulate_payment, name='sandbox_simulate_payment'),
+    path('payments/settings/', views.get_payment_settings, name='get_payment_settings'),
 
     # Admin Authentication
     path('admin/auth/login/', views.admin_login, name='admin_login'),
@@ -57,6 +62,8 @@ urlpatterns = [
     # Admin Orders & Sales Management
     path('admin/orders/', views.admin_orders_list, name='admin_orders_list'),
     path('admin/orders/<int:order_id>/', views.admin_order_detail, name='admin_order_detail'),
+    path('admin/orders/<int:order_id>/approve/', views.admin_order_approve_payment, name='admin_order_approve_payment'),
+    path('admin/orders/<int:order_id>/reject/', views.admin_order_reject_payment, name='admin_order_reject_payment'),
     path('admin/orders/<int:order_id>/refund/', views.admin_order_refund, name='admin_order_refund'),
 
     # Admin Educational Structure Management

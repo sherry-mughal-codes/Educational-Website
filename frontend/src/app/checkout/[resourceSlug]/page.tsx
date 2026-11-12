@@ -8,12 +8,14 @@ import {
   createOrder,
   getPaymentGateways,
   submitPaymentCallback,
+  getPaymentSettings,
+  PaymentSettingsResponse,
+  PaymentAccountItem,
   StudentUser,
   GatewayItem,
   ResourceItem,
 } from '@/lib/api';
 import { trackEvent } from '@/lib/analytics';
-import PasswordInput from '@/components/PasswordInput';
 
 export default function CheckoutPage() {
   const router = useRouter();
@@ -23,12 +25,14 @@ export default function CheckoutPage() {
   const [student, setStudent] = useState<StudentUser | null>(null);
   const [resource, setResource] = useState<ResourceItem | null>(null);
   const [gateways, setGateways] = useState<GatewayItem[]>([]);
-  const [selectedGateway, setSelectedGateway] = useState<string>('jazzcash');
+  const [selectedGateway, setSelectedGateway] = useState<string>('direct_transfer');
+  const [paymentSettings, setPaymentSettings] = useState<PaymentSettingsResponse | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // Interactive Payment Fields State (Phone number and PIN for wallets, TID for direct transfer)
-  const [mobileNumber, setMobileNumber] = useState('');
-  const [mpin, setMpin] = useState('');
+  // Direct Transfer / Mobile Wallet Verification Fields
+  const [senderPhone, setSenderPhone] = useState('');
   const [tid, setTid] = useState('');
+  const [customerNote, setCustomerNote] = useState('');
 
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -46,14 +50,23 @@ export default function CheckoutPage() {
       })
       .catch(() => {});
 
-    // 2. Fetch gateways (strictly limit to JazzCash, Easypaisa, and Direct Transfer)
+    // 2. Fetch gateways (JazzCash, Easypaisa, and Direct Transfer)
     getPaymentGateways()
       .then((gwList) => {
-        const allowed = ['jazzcash', 'easypaisa', 'direct_transfer'];
+        const allowed = ['direct_transfer', 'jazzcash', 'easypaisa'];
         const filtered = (gwList || []).filter((gw) => allowed.includes(gw.id));
         setGateways(filtered);
         if (filtered.length > 0) {
           setSelectedGateway(filtered[0].id);
+        }
+      })
+      .catch(() => {});
+
+    // 2b. Fetch dynamic admin-configured receiving accounts and steps
+    getPaymentSettings()
+      .then((settings) => {
+        if (settings) {
+          setPaymentSettings(settings);
         }
       })
       .catch(() => {});
@@ -76,7 +89,6 @@ export default function CheckoutPage() {
         setErrorMessage(null);
       })
       .catch(() => {
-        // Fallback search in case of legacy slug mapping
         fetch(`${apiUrl}/api/resources/?q=${encodeURIComponent(resourceSlug)}`, { cache: 'no-store' })
           .then((res) => res.json())
           .then((data) => {
@@ -106,6 +118,17 @@ export default function CheckoutPage() {
       .finally(() => setIsLoading(false));
   }, [resourceSlug]);
 
+  const activeGw = gateways.find((g) => g.id === selectedGateway);
+  const displayPrice = resource?.price ? Number(resource.price).toLocaleString('en-PK') : '...';
+
+  const handleCopy = (text: string, id: string) => {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(text);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 2500);
+    }
+  };
+
   const handleStartPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!student) {
@@ -118,31 +141,15 @@ export default function CheckoutPage() {
       return;
     }
 
-    // Realistic Field Validations
-    if (selectedGateway === 'jazzcash' || selectedGateway === 'easypaisa') {
-      const cleanPhone = mobileNumber.trim().replace(/\D/g, '');
-      if (!cleanPhone || cleanPhone.length < 10) {
-        setErrorMessage('Please enter a valid 11-digit mobile account number (e.g. 03001234567).');
-        return;
-      }
-      if (!mpin.trim() || mpin.trim().length < 4) {
-        setErrorMessage(`Please enter your ${selectedGateway === 'jazzcash' ? '4-digit MPIN' : '5-digit PIN'}.`);
-        return;
-      }
-    } else if (selectedGateway === 'direct_transfer') {
-      if (!mobileNumber.trim() || mobileNumber.trim().length < 10) {
-        setErrorMessage('Please enter your sender mobile phone number.');
-        return;
-      }
-      if (!tid.trim() || tid.trim().length < 6) {
-        setErrorMessage('Please enter the Transaction ID (TID) from your bank/wallet SMS confirmation.');
-        return;
-      }
+    const cleanPhone = senderPhone.trim().replace(/\D/g, '');
+    if (!cleanPhone || cleanPhone.length < 10) {
+      setErrorMessage('Please enter a valid sender phone number (e.g. 03001234567).');
+      return;
     }
 
     setIsSubmitting(true);
     setErrorMessage(null);
-    setProcessingStep('Initializing secure transaction...');
+    setProcessingStep('Registering checkout order...');
 
     try {
       const priceNum = Number(resource.price || 0);
@@ -157,6 +164,7 @@ export default function CheckoutPage() {
         resource_id: resource.id,
         gateway_id: selectedGateway,
         return_url: returnUrl,
+        customer_note: customerNote.trim(),
       });
 
       if (result.already_owned) {
@@ -175,38 +183,32 @@ export default function CheckoutPage() {
 
       const orderRef = result.order_reference;
 
-      // Realistic Payment Processing Simulation & Direct Callback
-      setProcessingStep(
-        selectedGateway === 'jazzcash'
-          ? 'Contacting JazzCash gateway & verifying 4-digit MPIN...'
-          : selectedGateway === 'easypaisa'
-          ? 'Connecting to Easypaisa network & verifying account PIN...'
-          : 'Verifying bank transaction ID (TID) & ledger...'
-      );
+      // If gateway is live with automated hosted checkout (e.g. corporate merchant portal)
+      if (activeGw?.is_live && result.payment?.action_url) {
+        window.location.href = result.payment.action_url;
+        return;
+      }
 
-      // Submit verification callback
-      const callbackPayload: Record<string, any> = {
+      // Authentic Pakistani verification workflow: submit TID and phone for administrator approval
+      setProcessingStep('Submitting payment details for verification...');
+
+      const callbackPayload = {
         order_reference: orderRef,
         amount: resource.price,
-        mobile_number: mobileNumber.trim(),
-        sender_phone: mobileNumber.trim(),
-        mpin: mpin.trim(),
-        pin: mpin.trim(),
+        sender_phone: senderPhone.trim(),
         transaction_id: tid.trim(),
-        tid: tid.trim(),
-        resCode: '0000',
-        pp_ResponseCode: '000',
+        customer_note: customerNote.trim(),
       };
 
-      const verifyRes = await submitPaymentCallback(selectedGateway, callbackPayload);
+      const verifyRes = await submitPaymentCallback('direct_transfer', callbackPayload);
 
       if (verifyRes.success) {
-        setProcessingStep('✓ Payment verified! Redirecting to your unlocked study notes...');
+        setProcessingStep('✓ Payment details submitted for verification! Redirecting to confirmation...');
         setTimeout(() => {
-          router.push(`/checkout/result/?order_ref=${encodeURIComponent(orderRef)}`);
-        }, 500);
+          router.push(`/checkout/result/?order_ref=${encodeURIComponent(orderRef)}&status=pending_verification`);
+        }, 350);
       } else {
-        setErrorMessage(verifyRes.error || 'Payment authorization was declined. Please check your credentials.');
+        setErrorMessage(verifyRes.error || 'Submission failed. Please check your transaction details.');
         setIsSubmitting(false);
         setProcessingStep(null);
       }
@@ -256,7 +258,51 @@ export default function CheckoutPage() {
     );
   }
 
-  const displayPrice = resource?.price ? Number(resource.price).toLocaleString('en-PK') : '...';
+  // Determine dynamic accounts and steps from admin settings
+  const allAccounts = paymentSettings?.accounts?.filter((a) => a.is_active !== false) || [
+    {
+      id: 'default-1',
+      provider: 'JazzCash / Easypaisa / Raast',
+      account_number: '0300-8889999',
+      account_title: 'FBISE Educational Notes Official',
+      is_active: true,
+      notes: 'Mobile Wallet / Raast',
+    },
+  ];
+
+  // Filter accounts according to the student's selected payment tab
+  const displayedAccounts = selectedGateway === 'jazzcash'
+    ? (allAccounts.filter((a) => a.provider.toLowerCase().includes('jazz')).length > 0
+        ? allAccounts.filter((a) => a.provider.toLowerCase().includes('jazz'))
+        : allAccounts)
+    : selectedGateway === 'easypaisa'
+    ? (allAccounts.filter((a) => a.provider.toLowerCase().includes('easy')).length > 0
+        ? allAccounts.filter((a) => a.provider.toLowerCase().includes('easy'))
+        : allAccounts)
+    : allAccounts;
+
+  const rawWhatsApp = paymentSettings?.whatsapp_number || '0300-1234567';
+  let cleanWhatsApp = rawWhatsApp.replace(/\D/g, '');
+  if (cleanWhatsApp.startsWith('0')) cleanWhatsApp = '92' + cleanWhatsApp.slice(1);
+  if (!cleanWhatsApp.startsWith('92')) cleanWhatsApp = '92' + cleanWhatsApp;
+
+  const whatsappMsg = encodeURIComponent(
+    `Assalam-o-Alaikum! I have paid PKR ${displayPrice} for ${resource?.title || 'FBISE Notes'}. Please find my payment screenshot attached for verification.`
+  );
+  const whatsappUrl = `https://wa.me/${cleanWhatsApp}?text=${whatsappMsg}`;
+
+  const dynamicSteps = (paymentSettings?.instructions_steps && paymentSettings.instructions_steps.length > 0)
+    ? paymentSettings.instructions_steps.map((step) =>
+        step
+          .replace(/\{price\}/g, String(displayPrice))
+          .replace(/\{whatsapp\}/g, rawWhatsApp)
+      )
+    : [
+        `Pay PKR ${displayPrice} on this number or bank account from the options below.`,
+        `Send the transaction screenshot on this number (${rawWhatsApp}) on WhatsApp and wait for your verification.`,
+        `Enter your sender mobile number and Transaction ID (TID) below and submit.`,
+        `Your offline PDF download will be automatically unlocked as soon as verified by our team.`,
+      ];
 
   return (
     <div className="container checkout-wrapper" style={{ padding: '1rem 1rem 2.5rem 1rem', maxWidth: '860px', margin: '0 auto' }}>
@@ -303,7 +349,7 @@ export default function CheckoutPage() {
               <li>✓ Chapter-by-chapter solved textbook exercises</li>
               <li>✓ FBISE Student Learning Outcomes (SLO) conceptual Q&amp;As</li>
               <li>✓ Step-by-step solved numericals &amp; formula sheets</li>
-              <li>✓ Lifetime access &amp; free future syllabus updates</li>
+              <li>✓ Lifetime access &amp; free syllabus updates</li>
             </ul>
           </div>
 
@@ -323,7 +369,7 @@ export default function CheckoutPage() {
           </div>
         </div>
 
-        {/* Right Column: Student Status & Realistic Payment Form */}
+        {/* Right Column: Student Status & Secure Payment Options */}
         <div className="checkout-action-card" style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '1.25rem', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
           <h2 style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0f172a', margin: '0 0 0.85rem 0' }}>
             Payment Method
@@ -377,10 +423,10 @@ export default function CheckoutPage() {
                 <strong style={{ color: '#0f172a' }}>{student.full_name || student.email}</strong>
               </div>
 
-              {/* Payment Gateway Radio List (3 options only: JazzCash, Easypaisa, Direct Transfer) */}
+              {/* Payment Gateway Radio List */}
               <div style={{ marginBottom: '1rem' }}>
                 <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, color: '#334155', marginBottom: '0.45rem', textTransform: 'uppercase' }}>
-                  Choose Pakistani Payment Option:
+                  Choose Payment Method:
                 </label>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
                   {gateways.map((gw) => (
@@ -412,14 +458,32 @@ export default function CheckoutPage() {
                       <div style={{ flex: 1 }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
                           <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#0f172a' }}>
-                            {gw.name}
+                            {gw.id === 'jazzcash'
+                              ? 'JazzCash'
+                              : gw.id === 'easypaisa'
+                              ? 'Easypaisa'
+                              : 'Direct Bank / Raast / Wallet Transfer'}
                           </span>
-                          <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#047857', background: '#ecfdf5', padding: '0.1rem 0.45rem', borderRadius: '4px', border: '1px solid #a7f3d0' }}>
-                            {gw.badge}
+                          <span
+                            style={{
+                              fontSize: '0.68rem',
+                              fontWeight: 700,
+                              color: '#047857',
+                              background: '#ecfdf5',
+                              padding: '0.1rem 0.45rem',
+                              borderRadius: '4px',
+                              border: '1px solid #a7f3d0',
+                            }}
+                          >
+                            Verified Manual Transfer
                           </span>
                         </div>
                         <p style={{ fontSize: '0.75rem', color: '#64748b', margin: '0.15rem 0 0 0' }}>
-                          {gw.description}
+                          {gw.id === 'jazzcash'
+                            ? 'Transfer via JazzCash mobile app or retail till & submit receipt TID.'
+                            : gw.id === 'easypaisa'
+                            ? 'Transfer via Easypaisa mobile app or retail shop & submit receipt TID.'
+                            : 'Transfer funds via Bank, Raast, or Mobile Account directly.'}
                         </p>
                       </div>
                     </label>
@@ -427,128 +491,152 @@ export default function CheckoutPage() {
                 </div>
               </div>
 
-              {/* Gateway-Specific Form Fields */}
+              {/* Dynamic Receiving Accounts & Verification Box */}
               <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0.85rem', marginBottom: '1rem' }}>
-                {selectedGateway === 'jazzcash' && (
-                  <div>
-                    <div style={{ fontWeight: 700, color: '#b91c1c', fontSize: '0.825rem', marginBottom: '0.65rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                      <span>📱</span> JazzCash Mobile Account
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
-                      <div>
-                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#334155', marginBottom: '0.2rem' }}>
-                          Phone Number <span style={{ color: '#dc2626' }}>*</span>
-                        </label>
-                        <input
-                          type="tel"
-                          required
-                          placeholder="03001234567"
-                          value={mobileNumber}
-                          onChange={(e) => setMobileNumber(e.target.value)}
-                          className="form-input"
-                          style={{ fontSize: '0.85rem', padding: '0.45rem 0.65rem' }}
-                        />
-                      </div>
-                      <div>
-                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#334155', marginBottom: '0.2rem' }}>
-                          Account PIN (4-digit MPIN) <span style={{ color: '#dc2626' }}>*</span>
-                        </label>
-                        <PasswordInput
-                          maxLength={4}
-                          placeholder="••••"
-                          value={mpin}
-                          onChange={(e) => setMpin(e.target.value)}
-                          style={{ fontSize: '0.85rem', padding: '0.45rem 0.65rem' }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                )}
+                <div style={{ fontWeight: 700, color: '#1e40af', fontSize: '0.825rem', marginBottom: '0.55rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                  <span>🏦</span> Official Receiving Accounts
+                </div>
 
-                {selectedGateway === 'easypaisa' && (
-                  <div>
-                    <div style={{ fontWeight: 700, color: '#047857', fontSize: '0.825rem', marginBottom: '0.65rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                      <span>📱</span> Easypaisa Mobile Account
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
-                      <div>
-                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#334155', marginBottom: '0.2rem' }}>
-                          Phone Number <span style={{ color: '#dc2626' }}>*</span>
-                        </label>
-                        <input
-                          type="tel"
-                          required
-                          placeholder="03451234567"
-                          value={mobileNumber}
-                          onChange={(e) => setMobileNumber(e.target.value)}
-                          className="form-input"
-                          style={{ fontSize: '0.85rem', padding: '0.45rem 0.65rem' }}
-                        />
+                {/* Displayed Accounts Cards */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                  {displayedAccounts.map((acc, idx) => (
+                    <div
+                      key={acc.id || idx}
+                      style={{
+                        background: '#ffffff',
+                        padding: '0.65rem 0.75rem',
+                        borderRadius: '6px',
+                        border: '1px solid #cbd5e1',
+                        fontSize: '0.78rem',
+                        color: '#334155',
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.2rem' }}>
+                        <span style={{ fontWeight: 700, color: '#0f172a' }}>{acc.provider}</span>
+                        {acc.notes && (
+                          <span style={{ fontSize: '0.68rem', background: '#f1f5f9', padding: '0.1rem 0.35rem', borderRadius: '4px', color: '#475569' }}>
+                            {acc.notes}
+                          </span>
+                        )}
                       </div>
-                      <div>
-                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#334155', marginBottom: '0.2rem' }}>
-                          Account PIN (5-digit PIN) <span style={{ color: '#dc2626' }}>*</span>
-                        </label>
-                        <PasswordInput
-                          maxLength={5}
-                          placeholder="•••••"
-                          value={mpin}
-                          onChange={(e) => setMpin(e.target.value)}
-                          style={{ fontSize: '0.85rem', padding: '0.45rem 0.65rem' }}
-                        />
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.25rem' }}>
+                        <div>
+                          Account Number: <strong style={{ fontSize: '0.875rem', color: '#047857' }}>{acc.account_number}</strong>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleCopy(acc.account_number, acc.id || String(idx))}
+                          style={{
+                            background: copiedId === (acc.id || String(idx)) ? '#047857' : '#f1f5f9',
+                            color: copiedId === (acc.id || String(idx)) ? '#ffffff' : '#334155',
+                            border: '1px solid #cbd5e1',
+                            borderRadius: '4px',
+                            padding: '0.15rem 0.5rem',
+                            fontSize: '0.7rem',
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {copiedId === (acc.id || String(idx)) ? '✓ Copied' : '📋 Copy'}
+                        </button>
                       </div>
+                      <div>Account Title: <strong>{acc.account_title}</strong></div>
+                      {acc.iban && <div>IBAN / Raast: <strong>{acc.iban}</strong></div>}
+                      <div>Amount: <strong style={{ color: '#047857' }}>PKR {displayPrice}</strong></div>
                     </div>
-                  </div>
-                )}
+                  ))}
+                </div>
 
-                {selectedGateway === 'direct_transfer' && (
-                  <div>
-                    <div style={{ fontWeight: 700, color: '#1e40af', fontSize: '0.825rem', marginBottom: '0.45rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                      <span>🏦</span> Official Platform Bank / Wallet Details
-                    </div>
-                    <div style={{ background: '#ffffff', padding: '0.65rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.78rem', color: '#334155', marginBottom: '0.65rem' }}>
-                      <div>Account: <strong>0300-8889999</strong> (JazzCash / Easypaisa / Raast)</div>
-                      <div>Title: <strong>FBISE Notes Official</strong></div>
-                      <div>Amount: <strong>PKR {displayPrice}</strong></div>
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.65rem' }}>
-                      <div>
-                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#334155', marginBottom: '0.2rem' }}>
-                          Sender Phone Number <span style={{ color: '#dc2626' }}>*</span>
-                        </label>
-                        <input
-                          type="tel"
-                          required
-                          placeholder="03001234567"
-                          value={mobileNumber}
-                          onChange={(e) => setMobileNumber(e.target.value)}
-                          className="form-input"
-                          style={{ fontSize: '0.85rem', padding: '0.45rem 0.65rem' }}
-                        />
-                      </div>
-                      <div>
-                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#334155', marginBottom: '0.2rem' }}>
-                          Transaction ID (TID) <span style={{ color: '#dc2626' }}>*</span>
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          placeholder="e.g. 83921084920"
-                          value={tid}
-                          onChange={(e) => setTid(e.target.value)}
-                          className="form-input"
-                          style={{ fontSize: '0.85rem', padding: '0.45rem 0.65rem' }}
-                        />
-                      </div>
-                    </div>
+                {/* Steps Section configured by Admin */}
+                <div style={{ fontSize: '0.76rem', color: '#475569', marginBottom: '0.75rem', background: '#eff6ff', padding: '0.65rem 0.85rem', borderRadius: '6px', border: '1px solid #bfdbfe' }}>
+                  <div style={{ fontWeight: 700, color: '#1e40af', marginBottom: '0.25rem' }}>
+                    Payment &amp; Verification Steps:
                   </div>
-                )}
+                  <ol style={{ margin: '0.2rem 0 0 1.15rem', padding: 0, display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                    {dynamicSteps.map((step, sIdx) => (
+                      <li key={sIdx}>{step}</li>
+                    ))}
+                  </ol>
+
+                  {/* One-Tap WhatsApp Screenshot Verification Button */}
+                  <div style={{ marginTop: '0.65rem' }}>
+                    <a
+                      href={whatsappUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.4rem',
+                        background: '#25D366',
+                        color: '#ffffff',
+                        padding: '0.4rem 0.75rem',
+                        borderRadius: '6px',
+                        fontSize: '0.78rem',
+                        fontWeight: 700,
+                        textDecoration: 'none',
+                        boxShadow: '0 1px 3px rgba(37, 211, 102, 0.3)',
+                      }}
+                    >
+                      <span>💬</span> Send Screenshot on WhatsApp ({rawWhatsApp})
+                    </a>
+                  </div>
+                </div>
+
+                {/* Sender Mobile Number & TID Input */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.65rem' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#334155', marginBottom: '0.2rem' }}>
+                      Sender Phone Number <span style={{ color: '#dc2626' }}>*</span>
+                    </label>
+                    <input
+                      type="tel"
+                      required
+                      placeholder="e.g. 03001234567"
+                      value={senderPhone}
+                      onChange={(e) => setSenderPhone(e.target.value)}
+                      className="form-input"
+                      style={{ fontSize: '0.85rem', padding: '0.45rem 0.65rem' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#334155', marginBottom: '0.2rem' }}>
+                      Transaction ID (TID) <span style={{ color: '#64748b', fontWeight: 400 }}>(Optional)</span>
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. 83921084920 (optional)"
+                      value={tid}
+                      onChange={(e) => setTid(e.target.value)}
+                      className="form-input"
+                      style={{ fontSize: '0.85rem', padding: '0.45rem 0.65rem' }}
+                    />
+                  </div>
+                </div>
+
+                {/* Additional Note / Payment Remarks */}
+                <div style={{ marginTop: '0.65rem' }}>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#334155', marginBottom: '0.2rem' }}>
+                    Note / Payment Details <span style={{ color: '#64748b', fontWeight: 400 }}>(Optional)</span>
+                  </label>
+                  <textarea
+                    rows={2}
+                    placeholder="e.g. Sent from Ali's JazzCash account, or transaction time / ATM branch details..."
+                    value={customerNote}
+                    onChange={(e) => setCustomerNote(e.target.value)}
+                    className="form-textarea"
+                    style={{ fontSize: '0.825rem', padding: '0.45rem 0.65rem', resize: 'vertical' }}
+                  />
+                </div>
               </div>
 
               {/* Security Banner */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.75rem', color: '#64748b', marginBottom: '1rem' }}>
                 <span>🔒</span>
-                <span>Instant payment verification. PDF study packet is unlocked immediately upon authorization.</span>
+                <span>
+                  {paymentSettings?.notice_text || 'Transfers are verified directly against our official bank statement by our administrative team. Never share your mobile wallet PIN or password.'}
+                </span>
               </div>
 
               <button
@@ -561,9 +649,12 @@ export default function CheckoutPage() {
                   fontSize: '0.95rem',
                   fontWeight: 700,
                   borderRadius: '8px',
+                  cursor: isSubmitting ? 'not-allowed' : 'pointer',
                 }}
               >
-                {isSubmitting ? 'Verifying Transaction...' : `Pay PKR ${displayPrice} & Unlock PDF →`}
+                {isSubmitting
+                  ? 'Submitting Verification...'
+                  : `Submit Payment for Verification (PKR ${displayPrice}) →`}
               </button>
 
               <div style={{ textAlign: 'center', marginTop: '0.75rem' }}>

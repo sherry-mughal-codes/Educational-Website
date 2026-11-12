@@ -11,9 +11,9 @@ from .sandbox import SandboxPaymentGateway
 logger = logging.getLogger(__name__)
 
 GATEWAY_CLASSES = {
+    'direct_transfer': DirectTransferGateway,
     'jazzcash': JazzCashGateway,
     'easypaisa': EasypaisaGateway,
-    'direct_transfer': DirectTransferGateway,
     'card': CardPaymentGateway,
     'sandbox': SandboxPaymentGateway,
 }
@@ -22,12 +22,12 @@ def get_payment_gateway(gateway_id: Optional[str] = None) -> BasePaymentGateway:
     """
     Returns an instantiated payment gateway adapter.
     """
-    selected_id = (gateway_id or getattr(settings, 'PAYMENT_GATEWAY_DEFAULT', 'jazzcash')).lower().strip()
+    selected_id = (gateway_id or getattr(settings, 'PAYMENT_GATEWAY_DEFAULT', 'direct_transfer')).lower().strip()
 
     gateway_class = GATEWAY_CLASSES.get(selected_id)
     if not gateway_class:
-        logger.warning(f"Unknown gateway '{selected_id}', falling back to JazzCash")
-        gateway_class = JazzCashGateway
+        logger.warning(f"Unknown gateway '{selected_id}', falling back to DirectTransferGateway")
+        gateway_class = DirectTransferGateway
 
     return gateway_class()
 
@@ -36,31 +36,34 @@ def list_available_gateways() -> List[Dict[str, Any]]:
     """
     Returns list of available authentic Pakistani payment options for the student checkout screen.
     """
+    is_jc_configured = bool(getattr(settings, 'JAZZ_CASH_MERCHANT_ID', ''))
+    is_ep_configured = bool(getattr(settings, 'EASYPAISA_STORE_ID', ''))
+
     gateways = [
         {
-            'id': 'jazzcash',
-            'name': 'JazzCash (Mobile Account / MPIN)',
-            'description': 'Pay instantly with your JazzCash mobile account and 4-digit MPIN authorization.',
+            'id': 'direct_transfer',
+            'name': 'Direct Bank / Raast / Wallet Transfer (TID)',
+            'description': 'Transfer funds via JazzCash, Easypaisa, Raast, or Bank to our platform account and submit your Transaction ID (TID).',
             'is_live': True,
-            'badge': 'Instant Mobile Wallet',
+            'badge': 'Instant TID Submission',
+        },
+        {
+            'id': 'jazzcash',
+            'name': 'JazzCash (Official Merchant Gateway)',
+            'description': 'Automated payment via JazzCash hosted merchant checkout portal.' if is_jc_configured else 'Requires official JazzCash merchant account credentials.',
+            'is_live': is_jc_configured,
+            'badge': 'Automated Gateway' if is_jc_configured else 'Requires Merchant Setup',
         },
         {
             'id': 'easypaisa',
-            'name': 'Easypaisa (Mobile Wallet / OTP)',
-            'description': 'Direct debit from your Easypaisa mobile balance with push approval.',
-            'is_live': True,
-            'badge': 'Instant Mobile Wallet',
-        },
-        {
-            'id': 'direct_transfer',
-            'name': 'Direct Transfer / Transaction ID (TID)',
-            'description': 'Send funds to platform account (JazzCash/Easypaisa/Raast) and enter your SMS Transaction ID.',
-            'is_live': True,
-            'badge': 'Manual Transfer (TID)',
+            'name': 'Easypaisa (Official Merchant Gateway)',
+            'description': 'Automated payment via Easypaisa hosted merchant checkout portal.' if is_ep_configured else 'Requires official Easypaisa merchant account credentials.',
+            'is_live': is_ep_configured,
+            'badge': 'Automated Gateway' if is_ep_configured else 'Requires Merchant Setup',
         },
     ]
 
-    if getattr(settings, 'PAYMENT_SANDBOX_ENABLED', True):
+    if getattr(settings, 'PAYMENT_SANDBOX_ENABLED', False):
         gateways.append({
             'id': 'sandbox',
             'name': 'Instant Sandbox Simulation (Test Mode)',
@@ -70,4 +73,3 @@ def list_available_gateways() -> List[Dict[str, Any]]:
         })
 
     return gateways
-

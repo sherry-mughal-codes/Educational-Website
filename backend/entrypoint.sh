@@ -34,5 +34,15 @@ EOF
 echo "==> Applying Django database migrations..."
 python manage.py migrate --noinput
 
+is_debug="${DJANGO_DEBUG:-1}"
+case "$is_debug" in
+  0|[Ff]alse|[Nn]o)
+    if [ "$1" = "python" ] && [ "$2" = "manage.py" ] && [ "$3" = "runserver" ]; then
+      echo "==> Production environment detected (DJANGO_DEBUG=0). Starting production Gunicorn WSGI server..."
+      exec gunicorn core.wsgi:application --bind 0.0.0.0:8000 --workers ${GUNICORN_WORKERS:-3} --timeout ${GUNICORN_TIMEOUT:-120} --access-logfile - --error-logfile -
+    fi
+    ;;
+esac
+
 echo "==> Starting backend command: $@"
 exec "$@"

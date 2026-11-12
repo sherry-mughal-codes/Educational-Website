@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { trackEvent } from '@/lib/analytics';
 
@@ -35,6 +35,9 @@ export default function PdfViewer({
   const [isOpen, setIsOpen] = useState(true);
   const [isTheaterMode, setIsTheaterMode] = useState(false);
 
+  const inlineIframeRef = useRef<HTMLIFrameElement | null>(null);
+  const theaterIframeRef = useRef<HTMLIFrameElement | null>(null);
+
   useEffect(() => {
     if (hasPdf && streamUrl) {
       trackEvent('view_pdf_notes_on_screen', {
@@ -44,6 +47,67 @@ export default function PdfViewer({
       });
     }
   }, [hasPdf, streamUrl, title, pageCount, userHasPurchased]);
+
+  // Comprehensive keyboard shortcut & print protection for online reader
+  useEffect(() => {
+    if (!isOpen && !isTheaterMode) return;
+
+    const blockShortcuts = (e: KeyboardEvent) => {
+      const isCtrlOrMeta = e.ctrlKey || e.metaKey;
+      const key = (e.key || '').toLowerCase();
+
+      // Block Save (Ctrl+S, Cmd+S), Print (Ctrl+P, Cmd+P), View Source (Ctrl+U),
+      // Select All (Ctrl+A), Copy (Ctrl+C), DevTools (F12, Ctrl+Shift+I/J/C)
+      if (
+        (isCtrlOrMeta && (key === 's' || key === 'p' || key === 'u' || key === 'a' || key === 'c')) ||
+        (isCtrlOrMeta && e.shiftKey && (key === 's' || key === 'i' || key === 'j' || key === 'c')) ||
+        e.key === 'F12'
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      }
+    };
+
+    const blockContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      return false;
+    };
+
+    window.addEventListener('keydown', blockShortcuts, true);
+    window.addEventListener('contextmenu', blockContextMenu, true);
+
+    return () => {
+      window.removeEventListener('keydown', blockShortcuts, true);
+      window.removeEventListener('contextmenu', blockContextMenu, true);
+    };
+  }, [isOpen, isTheaterMode]);
+
+  const attachProtectionToIframe = (iframeEl: HTMLIFrameElement | null) => {
+    if (!iframeEl) return;
+    try {
+      const win = iframeEl.contentWindow;
+      if (win && win.location.hostname === window.location.hostname) {
+        const blockShortcuts = (e: KeyboardEvent) => {
+          const isCtrlOrMeta = e.ctrlKey || e.metaKey;
+          const key = (e.key || '').toLowerCase();
+          if (
+            (isCtrlOrMeta && (key === 's' || key === 'p' || key === 'u' || key === 'a' || key === 'c')) ||
+            (isCtrlOrMeta && e.shiftKey && (key === 's' || key === 'i' || key === 'j' || key === 'c')) ||
+            e.key === 'F12'
+          ) {
+            e.preventDefault();
+            e.stopPropagation();
+            return false;
+          }
+        };
+        win.addEventListener('keydown', blockShortcuts, true);
+        win.addEventListener('contextmenu', (e) => { e.preventDefault(); return false; }, true);
+      }
+    } catch {
+      // Cross-origin iframe: protected by top window captures and print CSS
+    }
+  };
 
   const formattedSize = fileSizeBytes > 0
     ? `${(fileSizeBytes / (1024 * 1024)).toFixed(1)} MB`
@@ -62,18 +126,16 @@ export default function PdfViewer({
   }
 
   // Force toolbar=0 & navpanes=0 to strictly suppress browser PDF download/print icons for unpaid reading
-  const secureStreamUrl = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${streamUrl}#toolbar=0&navpanes=0&scrollbar=1`;
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const fullStreamUrl = streamUrl.startsWith('http') ? streamUrl : `${apiUrl}${streamUrl}`;
+  const secureStreamUrl = `${fullStreamUrl}#toolbar=0&navpanes=0&scrollbar=1`;
   const fullDownloadUrl = downloadUrl
-    ? `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${downloadUrl}`
-    : null;
-
-  const webReaderUrl = (classSlug && subjectSlug && resourceSlug)
-    ? `/${classSlug}/${subjectSlug}/${resourceSlug}/reader/`
+    ? `${apiUrl}${downloadUrl}`
     : null;
 
   return (
     <>
-      <section className="pdf-reader-section" aria-label="Online PDF Reader" style={{ margin: '1.5rem 0' }}>
+      <section className="pdf-reader-section pdf-reader-protected" aria-label="Online PDF Reader" style={{ margin: '1.5rem 0' }}>
         <div className="pdf-reader-header" style={{
           display: 'flex',
           alignItems: 'center',
@@ -164,7 +226,7 @@ export default function PdfViewer({
                   alignItems: 'center',
                   gap: '0.35rem',
                 }}
-                title="Purchase complete subject PDF to unlock offline download"
+                title="Purchase complete subject PDF for offline download"
               >
                 🔒 Download Offline PDF (PKR {price})
               </Link>
@@ -175,6 +237,7 @@ export default function PdfViewer({
         {isOpen && (
           <div
             onContextMenu={(e) => e.preventDefault()}
+            onDragStart={(e) => e.preventDefault()}
             style={{
               border: '1px solid #e2e8f0',
               borderTop: 'none',
@@ -183,10 +246,13 @@ export default function PdfViewer({
               height: '680px',
               background: '#0f172a',
               position: 'relative',
+              userSelect: 'none',
             }}
           >
             <iframe
+              ref={inlineIframeRef}
               src={secureStreamUrl}
+              onLoad={() => attachProtectionToIframe(inlineIframeRef.current)}
               title={`Online Reader: ${title}`}
               style={{ width: '100%', height: '100%', border: 'none' }}
               loading="lazy"
@@ -197,17 +263,23 @@ export default function PdfViewer({
 
       {/* On-Screen Theater Mode (Keeps student on website while giving 100% full-screen view) */}
       {isTheaterMode && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: '#0f172a',
-          zIndex: 9999,
-          display: 'flex',
-          flexDirection: 'column',
-        }}>
+        <div
+          onContextMenu={(e) => e.preventDefault()}
+          onDragStart={(e) => e.preventDefault()}
+          className="pdf-reader-protected"
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: '#0f172a',
+            zIndex: 9999,
+            display: 'flex',
+            flexDirection: 'column',
+            userSelect: 'none',
+          }}
+        >
           <div style={{
             display: 'flex',
             alignItems: 'center',
@@ -259,7 +331,7 @@ export default function PdfViewer({
                     fontWeight: 700,
                   }}
                 >
-                  🔒 Unlock Offline PDF (PKR {price})
+                  🔒 Download Offline PDF (PKR {price})
                 </Link>
               ) : null}
 
@@ -283,7 +355,9 @@ export default function PdfViewer({
             </div>
           </div>
           <iframe
+            ref={theaterIframeRef}
             src={secureStreamUrl}
+            onLoad={() => attachProtectionToIframe(theaterIframeRef.current)}
             title={`Fullscreen On-Screen Reader: ${title}`}
             style={{ width: '100%', flex: 1, border: 'none' }}
           />

@@ -3,7 +3,7 @@
 import Script from 'next/script';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useEffect, Suspense } from 'react';
-import { GA_MEASUREMENT_ID, IS_GA_ENABLED, IS_DEBUG_MODE, trackPageView } from '@/lib/analytics';
+import { GA_MEASUREMENT_ID, IS_GA_ENABLED, IS_DEBUG_MODE, trackPageView, sanitizeUrl } from '@/lib/analytics';
 
 /**
  * Route change tracker using App Router navigation hooks.
@@ -18,11 +18,12 @@ function AnalyticsListener() {
     if (!IS_GA_ENABLED || !pathname || pathname.startsWith('/admin')) return;
 
     const queryString = searchParams?.toString();
-    const url = queryString ? `${pathname}?${queryString}` : pathname;
+    const rawUrl = queryString ? `${pathname}?${queryString}` : pathname;
+    const cleanUrl = sanitizeUrl(rawUrl);
 
     // Small delay allows document.title to be set by Next.js metadata
     const timer = setTimeout(() => {
-      trackPageView(url, document.title);
+      trackPageView(cleanUrl, document.title);
     }, 50);
 
     return () => clearTimeout(timer);

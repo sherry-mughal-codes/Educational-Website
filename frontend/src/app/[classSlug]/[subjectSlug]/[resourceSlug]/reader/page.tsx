@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { getResource } from '@/lib/api';
+import ReaderProtectionWrapper from '@/components/ReaderProtectionWrapper';
 
 interface PageProps {
   params: {
@@ -33,11 +34,15 @@ export default async function DedicatedReaderPage({ params }: PageProps) {
 
   const { class: cls, subject } = resource;
   // Strictly enforce toolbar=0 & navpanes=0 to prevent browser download/print buttons
-  const secureStreamUrl = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${resource.pdf_stream_url}#toolbar=0&navpanes=0&scrollbar=1`;
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const fullStreamUrl = resource.pdf_stream_url.startsWith('http')
+    ? resource.pdf_stream_url
+    : `${apiUrl}${resource.pdf_stream_url}`;
+  const secureStreamUrl = `${fullStreamUrl}#toolbar=0&navpanes=0&scrollbar=1`;
   const backUrl = `/${cls.slug}/${subject.slug}/${resource.slug}/`;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', background: '#0f172a', overflow: 'hidden' }}>
+    <ReaderProtectionWrapper>
       {/* Top Reader Bar */}
       <header style={{
         display: 'flex',
@@ -131,7 +136,7 @@ export default async function DedicatedReaderPage({ params }: PageProps) {
                 fontWeight: 700,
               }}
             >
-              🔒 Buy Offline PDF (PKR {resource.price || '100'})
+              🔒 Download Offline PDF (PKR {resource.price ? Number(resource.price).toLocaleString('en-PK') : '100'})
             </Link>
           )}
         </div>
@@ -148,6 +153,6 @@ export default async function DedicatedReaderPage({ params }: PageProps) {
           style={{ width: '100%', height: '100%', border: 'none' }}
         />
       </main>
-    </div>
+    </ReaderProtectionWrapper>
   );
 }

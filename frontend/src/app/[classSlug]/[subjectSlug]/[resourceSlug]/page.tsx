@@ -169,7 +169,7 @@ export default async function ResourceDetailPage({ params }: PageProps) {
                   style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', background: '#047857', color: '#ffffff', padding: '0.4rem 0.95rem', fontSize: '0.8rem', fontWeight: 700, textDecoration: 'none', borderRadius: '6px' }}
                   title="Purchase complete subject PDF"
                 >
-                  📥 Unlock Full PDF (PKR {resource.price ? Number(resource.price).toLocaleString('en-PK') : ''}) →
+                  📥 Download Offline PDF (PKR {resource.price ? Number(resource.price).toLocaleString('en-PK') : ''}) →
                 </Link>
               )}
             </div>

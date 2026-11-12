@@ -214,6 +214,8 @@ class StudentProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='student_profile')
     is_email_verified = models.BooleanField(default=False, db_index=True)
     verification_token = models.CharField(max_length=100, blank=True)
+    verification_sent_at = models.DateTimeField(null=True, blank=True)
+    verified_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -232,10 +234,20 @@ class Order(models.Model):
     """
     STATUS_CHOICES = [
         ('pending', 'Pending Payment'),
+        ('pending_verification', 'Pending Verification'),
         ('paid', 'Paid'),
+        ('rejected', 'Payment Rejected'),
         ('failed', 'Payment Failed'),
         ('cancelled', 'Cancelled'),
         ('refunded', 'Refunded'),
+    ]
+
+    REFUND_STATUS_CHOICES = [
+        ('', 'None'),
+        ('requested', 'Refund Requested'),
+        ('approved_internal', 'Approved (Internal)'),
+        ('processed_provider', 'Processed by Provider'),
+        ('failed', 'Refund Failed'),
     ]
 
     order_reference = models.CharField(
@@ -254,8 +266,8 @@ class Order(models.Model):
     currency = models.CharField(max_length=10, default='PKR')
     payment_gateway = models.CharField(
         max_length=50,
-        default='jazzcash',
-        help_text="Selected payment provider identifier (e.g. jazzcash, easypaisa, sandbox)"
+        default='direct_transfer',
+        help_text="Selected payment provider identifier (e.g. jazzcash, easypaisa, direct_transfer, sandbox)"
     )
     gateway_reference = models.CharField(
         max_length=128,
@@ -264,12 +276,38 @@ class Order(models.Model):
         db_index=True,
         help_text="External gateway transaction or retrieval reference"
     )
+    sender_phone = models.CharField(max_length=50, blank=True, default='', help_text="Sender mobile/account number")
+    transaction_id = models.CharField(max_length=100, blank=True, default='', db_index=True, help_text="TID submitted by student")
+    customer_note = models.TextField(blank=True, default='', help_text="Optional customer note or details submitted during checkout")
     status = models.CharField(
-        max_length=20,
+        max_length=25,
         choices=STATUS_CHOICES,
         default='pending',
         db_index=True
     )
+    verified_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='verified_orders',
+        help_text="Administrator who verified direct transfer payment"
+    )
+    verified_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.CharField(max_length=255, blank=True, default='')
+
+    # Refund audit trail
+    refund_status = models.CharField(max_length=30, blank=True, default='', choices=REFUND_STATUS_CHOICES)
+    refund_reason = models.CharField(max_length=255, blank=True, default='')
+    refunded_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='refunded_orders'
+    )
+    refund_provider_reference = models.CharField(max_length=128, blank=True, default='')
+
     gateway_response_data = models.JSONField(
         default=dict,
         blank=True,
@@ -445,6 +483,12 @@ class PracticeSession(models.Model):
         blank=True,
         db_index=True,
         help_text="Client guest ID for unregistered student persistence"
+    )
+    guest_secret = models.CharField(
+        max_length=64,
+        blank=True,
+        default='',
+        help_text="Cryptographic secret token required for guest session operations"
     )
     topic = models.ForeignKey(PracticeTopic, on_delete=models.CASCADE, related_name='sessions')
     is_completed = models.BooleanField(default=False, db_index=True)

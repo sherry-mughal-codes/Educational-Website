@@ -4,11 +4,11 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import AdminNav from '@/components/AdminNav';
-import { adminGetMe, adminGetAllPages, adminUpdatePageContent, SitePageContentItem } from '@/lib/api';
+import { adminGetMe, adminGetAllPages, adminUpdatePageContent, SitePageContentItem, PaymentAccountItem } from '@/lib/api';
 
 export default function AdminPagesContentPage() {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<'about' | 'contact'>('about');
+  const [activeTab, setActiveTab] = useState<'about' | 'contact' | 'payment'>('about');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -37,7 +37,15 @@ export default function AdminPagesContentPage() {
   const [inquiryHeading, setInquiryHeading] = useState('');
   const [inquiryStepsText, setInquiryStepsText] = useState('');
 
-  // Check auth
+  // Payment Accounts & Steps state
+  const [paymentTitle, setPaymentTitle] = useState('Payment Accounts & Instructions');
+  const [paymentSubtitle, setPaymentSubtitle] = useState('Official Pakistani Receiving Accounts & Student Instructions');
+  const [whatsappNumber, setWhatsappNumber] = useState('0300-1234567');
+  const [paymentInstructionsText, setPaymentInstructionsText] = useState('');
+  const [paymentNoticeText, setPaymentNoticeText] = useState('');
+  const [paymentAccounts, setPaymentAccounts] = useState<PaymentAccountItem[]>([]);
+
+  // Check auth & query tab
   useEffect(() => {
     adminGetMe()
       .then((data) => {
@@ -48,6 +56,14 @@ export default function AdminPagesContentPage() {
       .catch(() => {
         router.replace('/admin/login/');
       });
+
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      const tabParam = urlParams.get('tab');
+      if (tabParam === 'payment' || tabParam === 'about' || tabParam === 'contact') {
+        setActiveTab(tabParam as any);
+      }
+    }
   }, [router]);
 
   // Load pages data
@@ -84,6 +100,19 @@ export default function AdminPagesContentPage() {
             setInquiryHeading(ct.data?.inquiry_heading || 'Reporting an Error or Note Correction');
             setInquiryStepsText(Array.isArray(ct.data?.inquiry_steps) ? ct.data.inquiry_steps.join('\n') : '');
           }
+
+          const ps = res.pages.payment_settings;
+          if (ps) {
+            setPaymentTitle(ps.title || 'Payment Accounts & Instructions');
+            setPaymentSubtitle(ps.subtitle || '');
+            setWhatsappNumber(ps.data?.whatsapp_number || '0300-1234567');
+            setPaymentNoticeText(ps.data?.notice_text || '');
+            const steps = Array.isArray(ps.data?.instructions_steps)
+              ? ps.data.instructions_steps.join('\n')
+              : '';
+            setPaymentInstructionsText(steps);
+            setPaymentAccounts(Array.isArray(ps.data?.accounts) ? ps.data.accounts : []);
+          }
         }
       } catch {
         setErrorMessage('Failed to load page content.');
@@ -93,6 +122,61 @@ export default function AdminPagesContentPage() {
     }
     loadData();
   }, []);
+
+  const handleAddAccount = () => {
+    const newAcc: PaymentAccountItem = {
+      id: `acc-${Date.now()}`,
+      provider: 'JazzCash',
+      account_title: 'FBISE Educational Notes Official',
+      account_number: '',
+      iban: '',
+      is_active: true,
+      notes: 'Mobile Account',
+    };
+    setPaymentAccounts([...paymentAccounts, newAcc]);
+  };
+
+  const handleUpdateAccount = (index: number, field: keyof PaymentAccountItem, value: any) => {
+    const updated = [...paymentAccounts];
+    updated[index] = { ...updated[index], [field]: value };
+    setPaymentAccounts(updated);
+  };
+
+  const handleRemoveAccount = (index: number) => {
+    setPaymentAccounts(paymentAccounts.filter((_, i) => i !== index));
+  };
+
+  const handleSavePayment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSaving(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    const instructions_steps = paymentInstructionsText
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    const payload = {
+      title: paymentTitle.trim(),
+      subtitle: paymentSubtitle.trim(),
+      data: {
+        whatsapp_number: whatsappNumber.trim(),
+        instructions_steps,
+        notice_text: paymentNoticeText.trim(),
+        accounts: paymentAccounts,
+      },
+    };
+
+    const res = await adminUpdatePageContent('payment_settings', payload);
+    setIsSaving(false);
+    if (res.success) {
+      setSuccessMessage('✓ Payment receiving accounts and instructions saved successfully and updated live on the checkout page.');
+      setTimeout(() => setSuccessMessage(null), 5000);
+    } else {
+      setErrorMessage(res.error || 'Failed to update payment settings.');
+    }
+  };
 
   const handleSaveAbout = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -230,6 +314,23 @@ export default function AdminPagesContentPage() {
             }}
           >
             ✉️ Contact Support Page
+          </button>
+          <button
+            type="button"
+            onClick={() => { setActiveTab('payment'); setSuccessMessage(null); setErrorMessage(null); }}
+            style={{
+              padding: '0.625rem 1.25rem',
+              fontWeight: 700,
+              fontSize: '0.9375rem',
+              background: 'none',
+              border: 'none',
+              borderBottom: activeTab === 'payment' ? '3px solid #047857' : '3px solid transparent',
+              color: activeTab === 'payment' ? '#047857' : '#64748b',
+              cursor: 'pointer',
+              marginBottom: '-2px',
+            }}
+          >
+            💳 Payment Accounts &amp; Steps
           </button>
         </div>
 
@@ -395,7 +496,7 @@ export default function AdminPagesContentPage() {
               {isSaving ? 'Saving Changes...' : '💾 Save About Page'}
             </button>
           </form>
-        ) : (
+        ) : activeTab === 'contact' ? (
           /* Contact Page Form */
           <form onSubmit={handleSaveContact} className="card" style={{ padding: '2rem' }}>
             <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0f172a', marginBottom: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -516,6 +617,236 @@ export default function AdminPagesContentPage() {
               style={{ minWidth: '220px' }}
             >
               {isSaving ? 'Saving Changes...' : '💾 Save Contact Page'}
+            </button>
+          </form>
+        ) : (
+          /* Payment Accounts & Verification Steps Form */
+          <form onSubmit={handleSavePayment} className="card" style={{ padding: '2rem' }}>
+            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0f172a', marginBottom: '0.35rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <span>💳</span> Official Receiving Accounts &amp; Verification Steps
+            </h2>
+            <p style={{ color: '#64748b', fontSize: '0.875rem', margin: '0 0 1.5rem 0' }}>
+              Configure official JazzCash, Easypaisa, and Bank accounts where students send payments, along with the custom steps and WhatsApp number for screenshot verification.
+            </p>
+
+            {/* WhatsApp Verification Number */}
+            <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '10px', padding: '1.25rem', marginBottom: '1.5rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                <span style={{ fontSize: '1.2rem' }}>💬</span>
+                <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: 0, color: '#166534' }}>
+                  WhatsApp Screenshot Verification Number
+                </h3>
+              </div>
+              <p style={{ fontSize: '0.8125rem', color: '#15803d', margin: '0 0 0.75rem 0' }}>
+                Students will be instructed to send their payment transaction screenshot to this WhatsApp number. A one-tap WhatsApp button will be shown on the checkout page.
+              </p>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label" style={{ fontWeight: 700 }}>
+                  WhatsApp Number <span className="req">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={whatsappNumber}
+                  onChange={(e) => setWhatsappNumber(e.target.value)}
+                  className="form-input"
+                  placeholder="e.g. 0300-1234567 or +923001234567"
+                  style={{ maxWidth: '360px' }}
+                />
+              </div>
+            </div>
+
+            {/* Step-by-Step Instructions */}
+            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '1.25rem', marginBottom: '1.5rem' }}>
+              <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: '0 0 0.35rem 0', color: '#1e293b' }}>
+                Custom Steps Shown to Students (One step per line)
+              </h3>
+              <p style={{ fontSize: '0.8125rem', color: '#64748b', margin: '0 0 0.75rem 0' }}>
+                Define the exact instructions students must follow. Use <code>{'{price}'}</code> to automatically display the resource price (e.g. 300) and <code>{'{whatsapp}'}</code> to display your WhatsApp number.
+              </p>
+              <textarea
+                rows={5}
+                required
+                value={paymentInstructionsText}
+                onChange={(e) => setPaymentInstructionsText(e.target.value)}
+                className="form-textarea"
+                placeholder="1. Pay PKR {price} on this number or bank account.&#10;2. Send screenshot on WhatsApp ({whatsapp}) and wait for verification.&#10;3. Enter your sender mobile number and Transaction ID (TID) below."
+              />
+            </div>
+
+            {/* Receiving Accounts List */}
+            <div style={{ marginBottom: '1.5rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.85rem' }}>
+                <div>
+                  <h3 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0, color: '#0f172a' }}>
+                    Official Receiving Accounts (JazzCash, Easypaisa, Bank / Raast)
+                  </h3>
+                  <p style={{ color: '#64748b', fontSize: '0.8125rem', margin: '0.15rem 0 0 0' }}>
+                    Add or edit the accounts where you accept student fee transfers.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleAddAccount}
+                  className="btn-outline-sm"
+                  style={{ fontWeight: 700 }}
+                >
+                  + Add New Account
+                </button>
+              </div>
+
+              {paymentAccounts.length === 0 ? (
+                <div style={{ padding: '1.5rem', textAlign: 'center', background: '#f8fafc', borderRadius: '8px', border: '1px dashed #cbd5e1' }}>
+                  <p style={{ color: '#64748b', margin: '0 0 0.75rem 0', fontSize: '0.875rem' }}>No payment receiving accounts configured yet.</p>
+                  <button type="button" onClick={handleAddAccount} className="btn-primary-sm">
+                    + Add Your First Account
+                  </button>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                  {paymentAccounts.map((acc, index) => (
+                    <div
+                      key={acc.id || index}
+                      style={{
+                        padding: '1rem',
+                        background: '#ffffff',
+                        border: '1px solid #cbd5e1',
+                        borderRadius: '8px',
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+                        <span style={{ fontWeight: 700, fontSize: '0.875rem', color: '#0f172a' }}>
+                          Account #{index + 1}
+                        </span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8125rem', cursor: 'pointer', color: '#334155' }}>
+                            <input
+                              type="checkbox"
+                              checked={acc.is_active !== false}
+                              onChange={(e) => handleUpdateAccount(index, 'is_active', e.target.checked)}
+                              style={{ accentColor: '#047857' }}
+                            />
+                            Active (Visible on checkout)
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveAccount(index)}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#dc2626',
+                              fontSize: '0.8125rem',
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            🗑️ Delete
+                          </button>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem' }}>
+                        <div>
+                          <label className="form-label" style={{ fontSize: '0.75rem', fontWeight: 600 }}>
+                            Provider / Bank Name <span className="req">*</span>
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            placeholder="e.g. JazzCash, Easypaisa, Meezan Bank"
+                            value={acc.provider}
+                            onChange={(e) => handleUpdateAccount(index, 'provider', e.target.value)}
+                            className="form-input"
+                            style={{ fontSize: '0.85rem', padding: '0.45rem 0.65rem' }}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="form-label" style={{ fontSize: '0.75rem', fontWeight: 600 }}>
+                            Account Number / Mobile Number <span className="req">*</span>
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            placeholder="e.g. 0300-1234567"
+                            value={acc.account_number}
+                            onChange={(e) => handleUpdateAccount(index, 'account_number', e.target.value)}
+                            className="form-input"
+                            style={{ fontSize: '0.85rem', padding: '0.45rem 0.65rem' }}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="form-label" style={{ fontSize: '0.75rem', fontWeight: 600 }}>
+                            Account Title <span className="req">*</span>
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            placeholder="e.g. FBISE Notes Official"
+                            value={acc.account_title}
+                            onChange={(e) => handleUpdateAccount(index, 'account_title', e.target.value)}
+                            className="form-input"
+                            style={{ fontSize: '0.85rem', padding: '0.45rem 0.65rem' }}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="form-label" style={{ fontSize: '0.75rem', fontWeight: 600 }}>
+                            IBAN / Raast ID (Optional)
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="e.g. PK00MEZN..."
+                            value={acc.iban || ''}
+                            onChange={(e) => handleUpdateAccount(index, 'iban', e.target.value)}
+                            className="form-input"
+                            style={{ fontSize: '0.85rem', padding: '0.45rem 0.65rem' }}
+                          />
+                        </div>
+                      </div>
+
+                      <div style={{ marginTop: '0.5rem' }}>
+                        <label className="form-label" style={{ fontSize: '0.75rem', fontWeight: 600 }}>
+                          Account Note / Instructions (Optional)
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Send as Mobile Account transfer or Raast transfer"
+                          value={acc.notes || ''}
+                          onChange={(e) => handleUpdateAccount(index, 'notes', e.target.value)}
+                          className="form-input"
+                          style={{ fontSize: '0.85rem', padding: '0.45rem 0.65rem' }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Security Notice */}
+            <div className="form-group" style={{ marginBottom: '1.5rem' }}>
+              <label className="form-label" style={{ fontWeight: 700 }}>
+                Security Notice shown to Students
+              </label>
+              <textarea
+                rows={2}
+                value={paymentNoticeText}
+                onChange={(e) => setPaymentNoticeText(e.target.value)}
+                className="form-textarea"
+                placeholder="Never share your mobile wallet PIN or password with anyone. FBISE staff will never ask for your account PIN."
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={isSaving}
+              className="btn-primary btn-large"
+              style={{ minWidth: '260px' }}
+            >
+              {isSaving ? 'Saving Payment Settings...' : '💾 Save Payment Accounts & Steps'}
             </button>
           </form>
         )}

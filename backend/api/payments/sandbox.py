@@ -10,18 +10,29 @@ logger = logging.getLogger(__name__)
 class SandboxPaymentGateway(BasePaymentGateway):
     """
     Controlled Sandbox Payment Gateway for Developer & Verification Testing.
-    Enables testing the complete end-to-end purchasing lifecycle:
-    - Order creation
-    - Gateway initiation
-    - Server-side independent verification
-    - Idempotent purchase granting
-    - Instant access to secure paid PDF downloads
-    Without requiring live Pakistani merchant bank accounts or real funds.
+    Disabled by default in production (when DJANGO_DEBUG=False).
+    Rejects any simulation requests when PAYMENT_SANDBOX_ENABLED is False.
     """
     gateway_id = 'sandbox'
     gateway_name = 'Sandbox (Test Simulation)'
 
+    def is_enabled(self) -> bool:
+        return bool(getattr(settings, 'PAYMENT_SANDBOX_ENABLED', False))
+
     def initiate_payment(self, order, return_url: Optional[str] = None) -> Dict[str, Any]:
+        if not self.is_enabled():
+            return {
+                'gateway': self.gateway_id,
+                'gateway_name': self.gateway_name,
+                'action_type': 'disabled',
+                'action_url': '',
+                'order_reference': order.order_reference,
+                'amount': str(order.amount),
+                'currency': order.currency,
+                'is_live_configured': False,
+                'error': 'Sandbox payment simulation is strictly disabled in production.',
+            }
+
         simulated_txn_ref = f"SANDBOX-TXN-{uuid.uuid4().hex[:12].upper()}"
         effective_return_url = return_url or f"{getattr(settings, 'FRONTEND_BASE_URL', 'http://localhost:3001')}/checkout/result/"
 
@@ -48,6 +59,16 @@ class SandboxPaymentGateway(BasePaymentGateway):
 
     def verify_payment(self, request_data: Dict[str, Any], order=None) -> PaymentVerificationResult:
         order_ref = request_data.get('order_reference') or (order.order_reference if order else '')
+
+        if not self.is_enabled():
+            return PaymentVerificationResult(
+                is_valid=False,
+                is_paid=False,
+                order_reference=order_ref,
+                error_message="Sandbox payment simulation is disabled in production.",
+                raw_data=request_data
+            )
+
         simulated_status = request_data.get('status', 'SUCCESS')
         gateway_txn_ref = request_data.get('gateway_txn_ref') or f"SANDBOX-{uuid.uuid4().hex[:8].upper()}"
 
@@ -73,4 +94,3 @@ class SandboxPaymentGateway(BasePaymentGateway):
             error_message='',
             raw_data=request_data
         )
-

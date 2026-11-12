@@ -47,9 +47,70 @@ function sanitizeParams(params: Record<string, unknown> = {}): Record<string, un
   return sanitized;
 }
 
+// Forbidden query parameter patterns that must NEVER be exposed in analytics URLs
+const FORBIDDEN_QUERY_PARAM_PATTERNS = [
+  'token',
+  'uid',
+  'mpin',
+  'pin',
+  'pass',
+  'key',
+  'secret',
+  'auth',
+  'sig',
+  'tid',
+  'order_ref',
+  'orderref',
+  'pp_',
+];
+
+/**
+ * Strips sensitive tokens, credentials, and transaction references
+ * from page paths and location URLs before dispatching to Google Analytics.
+ */
+export function sanitizeUrl(rawUrl: string): string {
+  if (!rawUrl) return '/';
+
+  try {
+    const isAbsolute = rawUrl.startsWith('http://') || rawUrl.startsWith('https://');
+    const parsed = new URL(rawUrl, 'https://educational-website.local');
+
+    // High sensitivity routes: strip all query parameters completely
+    const pathnameLower = parsed.pathname.toLowerCase();
+    if (
+      pathnameLower.includes('password-reset') ||
+      pathnameLower.includes('reset-password') ||
+      pathnameLower.includes('verify-email') ||
+      pathnameLower.includes('auth') ||
+      pathnameLower.includes('checkout')
+    ) {
+      return isAbsolute ? `${parsed.origin}${parsed.pathname}` : parsed.pathname;
+    }
+
+    // For general routes, strip forbidden search parameters
+    const toDelete: string[] = [];
+    parsed.searchParams.forEach((_, key) => {
+      const lowerKey = key.toLowerCase();
+      if (FORBIDDEN_QUERY_PARAM_PATTERNS.some((pattern) => lowerKey.includes(pattern))) {
+        toDelete.push(key);
+      }
+    });
+
+    toDelete.forEach((key) => parsed.searchParams.delete(key));
+
+    const search = parsed.searchParams.toString();
+    const cleanRelative = search ? `${parsed.pathname}?${search}` : parsed.pathname;
+
+    return isAbsolute ? `${parsed.origin}${cleanRelative}` : cleanRelative;
+  } catch {
+    return rawUrl.split('?')[0] || '/';
+  }
+}
+
 /**
  * Dispatch page_view event to Google Analytics 4.
  * Tracks initial page load and subsequent client-side App Router navigations.
+ * Sanitizes both page_path and page_location to ensure zero PII leakage.
  */
 export function trackPageView(url: string, title?: string): void {
   if (!IS_GA_ENABLED || typeof window === 'undefined') {
@@ -61,10 +122,15 @@ export function trackPageView(url: string, title?: string): void {
     return;
   }
 
+  const cleanPath = sanitizeUrl(url);
+  const cleanLocation = typeof window !== 'undefined'
+    ? `${window.location.origin}${cleanPath.startsWith('/') ? cleanPath : '/' + cleanPath}`
+    : cleanPath;
+
   const payload: Record<string, unknown> = {
-    page_path: url,
-    page_location: window.location.href,
-    page_title: title || document.title,
+    page_path: cleanPath,
+    page_location: cleanLocation,
+    page_title: title || (typeof document !== 'undefined' ? document.title : ''),
   };
 
   if (IS_DEBUG_MODE) {

@@ -36,7 +36,12 @@ from .email_utils import (
     send_password_reset_email,
     send_purchase_confirmation,
     send_payment_failed_alert,
+    send_email_verification,
+    send_payment_received_pending_verification,
+    send_payment_approved_notification,
+    send_payment_rejected_notification,
 )
+from .rate_limiting import get_client_ip, check_rate_limit, record_failed_attempt, reset_rate_limit
 from .payments.registry import get_payment_gateway, list_available_gateways
 from .payments.sandbox import SandboxPaymentGateway
 
@@ -545,10 +550,18 @@ def student_register(request):
     """
     Student registration endpoint.
     Creates a student account, hashes password, assigns non-staff permissions,
-    creates StudentProfile, logs the student in, and sends confirmation email.
+    creates StudentProfile with email verification token, dispatches verification email,
+    and initializes session.
     """
     if request.method != 'POST':
         return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    ip = get_client_ip(request)
+    is_limited, remaining = check_rate_limit(f"rate_register_{ip}", max_attempts=10, timeout_seconds=3600)
+    if is_limited:
+        return JsonResponse({
+            "error": f"Too many registration requests from this network. Please wait {max(1, remaining // 60)} minutes."
+        }, status=429)
 
     try:
         data = json.loads(request.body)
@@ -578,6 +591,8 @@ def student_register(request):
         return JsonResponse({"error": "An account with this email address is already registered. Please sign in."}, status=400)
 
     try:
+        record_failed_attempt(f"rate_register_{ip}", timeout_seconds=3600)
+
         with transaction.atomic():
             user = User.objects.create_user(
                 username=email,
@@ -587,18 +602,31 @@ def student_register(request):
                 is_staff=False,
                 is_superuser=False,
             )
-            StudentProfile.objects.create(user=user, is_email_verified=False)
-            login(request, user)
+            profile = StudentProfile.objects.create(
+                user=user,
+                is_email_verified=False,
+                verification_sent_at=timezone.now()
+            )
+
+            # Generate secure cryptographic verification token
+            token = default_token_generator.make_token(user)
+            uid = urlsafe_base64_encode(force_bytes(user.pk))
+            frontend_url = getattr(settings, 'FRONTEND_BASE_URL', 'http://localhost:3001')
+            verify_url = f"{frontend_url}/student/verify-email/?uid={uid}&token={token}"
+
+            send_email_verification(user, verify_url)
             send_registration_confirmation(user, request)
+            login(request, user)
 
         return JsonResponse({
             "success": True,
-            "message": "Account created successfully.",
+            "message": "Account created successfully. A verification link has been dispatched to your email.",
             "user": {
                 "id": user.id,
                 "email": user.email,
                 "full_name": user.first_name,
                 "is_staff": False,
+                "is_email_verified": False,
             }
         }, status=201)
     except Exception as exc:
@@ -607,10 +635,92 @@ def student_register(request):
 
 
 @csrf_exempt
+def student_verify_email(request):
+    """
+    Validates email verification token and marks student profile as verified.
+    """
+    if request.method not in ('POST', 'GET'):
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    if request.method == 'POST':
+        try:
+            data = json.loads(request.body)
+        except Exception:
+            data = request.POST
+        uid_b64 = data.get('uid', '')
+        token = data.get('token', '')
+    else:
+        uid_b64 = request.GET.get('uid', '')
+        token = request.GET.get('token', '')
+
+    if not uid_b64 or not token:
+        return JsonResponse({"error": "Verification identifier and token are required."}, status=400)
+
+    try:
+        uid = force_str(urlsafe_base64_decode(uid_b64))
+        user = User.objects.get(pk=uid)
+    except Exception:
+        return JsonResponse({"error": "Invalid verification link. Please request a new one."}, status=400)
+
+    if not default_token_generator.check_token(user, token):
+        return JsonResponse({"error": "Verification token is invalid or has expired."}, status=400)
+
+    profile, _ = StudentProfile.objects.get_or_create(user=user)
+    profile.is_email_verified = True
+    profile.verified_at = timezone.now()
+    profile.save(update_fields=['is_email_verified', 'verified_at'])
+
+    return JsonResponse({
+        "success": True,
+        "message": "Email address verified successfully. Your student account is now fully active."
+    }, status=200)
+
+
+@csrf_exempt
+def student_resend_verification(request):
+    """
+    Resends email verification link to authenticated student.
+    Rate-limited to 1 request per 120 seconds.
+    """
+    if request.method != 'POST':
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "Authentication required to request verification email."}, status=401)
+
+    user = request.user
+    profile, _ = StudentProfile.objects.get_or_create(user=user)
+    if profile.is_email_verified:
+        return JsonResponse({"success": True, "message": "Email address is already verified."}, status=200)
+
+    rate_key = f"resend_verify_{user.id}"
+    is_limited, remaining = check_rate_limit(rate_key, max_attempts=1, timeout_seconds=120)
+    if is_limited:
+        return JsonResponse({
+            "error": f"Please wait {remaining} seconds before requesting another verification email."
+        }, status=429)
+
+    token = default_token_generator.make_token(user)
+    uid = urlsafe_base64_encode(force_bytes(user.pk))
+    frontend_url = getattr(settings, 'FRONTEND_BASE_URL', 'http://localhost:3001')
+    verify_url = f"{frontend_url}/student/verify-email/?uid={uid}&token={token}"
+
+    send_email_verification(user, verify_url)
+    profile.verification_sent_at = timezone.now()
+    profile.save(update_fields=['verification_sent_at'])
+    record_failed_attempt(rate_key, timeout_seconds=120)
+
+    return JsonResponse({
+        "success": True,
+        "message": "A fresh verification link has been dispatched to your email."
+    }, status=200)
+
+
+@csrf_exempt
 def student_login(request):
     """
-    Student login endpoint. Validates credentials, protects against brute-force attacks,
-    and initializes secure session.
+    Student login endpoint. Validates credentials, protects against brute-force attacks
+    via cache-backed IP/account rate limiting, and initializes secure session.
     """
     if request.method != 'POST':
         return JsonResponse({"error": "Method not allowed"}, status=405)
@@ -626,11 +736,12 @@ def student_login(request):
     if not email or not password:
         return JsonResponse({"error": "Email and password are required."}, status=400)
 
-    fail_key = f"login_fails_{email}"
-    recent_fails = request.session.get(fail_key, 0)
-    if recent_fails >= 5:
+    ip = get_client_ip(request)
+    rate_key = f"login_fails_{ip}_{email}"
+    is_limited, remaining = check_rate_limit(rate_key, max_attempts=5, timeout_seconds=900)
+    if is_limited:
         return JsonResponse({
-            "error": "Too many failed attempts. Please wait a few minutes before trying again or use password recovery."
+            "error": f"Too many failed login attempts. Please wait {max(1, remaining // 60)} minutes before trying again or use password recovery."
         }, status=429)
 
     user = None
@@ -641,15 +752,16 @@ def student_login(request):
         user = authenticate(request, username=email, password=password)
 
     if user is None:
-        request.session[fail_key] = recent_fails + 1
+        record_failed_attempt(rate_key, timeout_seconds=900)
         return JsonResponse({"error": "Invalid email address or password."}, status=401)
 
     if not user.is_active:
         return JsonResponse({"error": "This account is inactive. Please contact support."}, status=403)
 
-    request.session.pop(fail_key, None)
+    reset_rate_limit(rate_key)
     login(request, user)
 
+    profile = getattr(user, 'student_profile', None)
     purchases_count = user.purchases.filter(is_active=True).count()
 
     return JsonResponse({
@@ -659,6 +771,7 @@ def student_login(request):
             "email": user.email,
             "full_name": user.first_name or user.username,
             "is_staff": user.is_staff,
+            "is_email_verified": profile.is_email_verified if profile else False,
             "purchases_count": purchases_count,
         }
     }, status=200)
@@ -677,6 +790,7 @@ def student_me(request):
         return JsonResponse({"authenticated": False, "user": None}, status=200)
 
     user = request.user
+    profile = getattr(user, 'student_profile', None)
     purchases_count = user.purchases.filter(is_active=True).count()
 
     return JsonResponse({
@@ -687,6 +801,7 @@ def student_me(request):
             "full_name": user.first_name or user.username,
             "is_staff": user.is_staff,
             "is_superuser": user.is_superuser,
+            "is_email_verified": profile.is_email_verified if profile else True,
             "purchases_count": purchases_count,
             "date_joined": user.date_joined.isoformat(),
         }
@@ -698,10 +813,19 @@ def student_password_reset_request(request):
     """
     Generates time-limited secure reset token and sends reset instructions.
     Generic response prevents user email enumeration.
-    In local development (DEBUG=True), also surfaces reset_url for direct testing.
+    Protected by cache-backed IP rate limiting.
+    In local development (DEBUG=True), also surfaces reset_url for direct testing;
+    in production, reset_url is NEVER exposed.
     """
     if request.method != 'POST':
         return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    ip = get_client_ip(request)
+    is_limited, remaining = check_rate_limit(f"pwd_reset_ip_{ip}", max_attempts=4, timeout_seconds=900)
+    if is_limited:
+        return JsonResponse({
+            "error": f"Too many password reset requests from this network. Please wait {max(1, remaining // 60)} minutes."
+        }, status=429)
 
     try:
         data = json.loads(request.body)
@@ -711,6 +835,7 @@ def student_password_reset_request(request):
     email = data.get('email', '').strip().lower()
     dev_reset_url = None
     if email:
+        record_failed_attempt(f"pwd_reset_ip_{ip}", timeout_seconds=900)
         user = User.objects.filter(email__iexact=email).first()
         if not user:
             user = User.objects.filter(username__iexact=email).first()
@@ -721,14 +846,14 @@ def student_password_reset_request(request):
             frontend_url = getattr(settings, 'FRONTEND_BASE_URL', 'http://localhost:3001')
             reset_url = f"{frontend_url}/student/reset-password/?uid={uid}&token={token}"
             send_password_reset_email(user, reset_url)
-            if settings.DEBUG:
+            if getattr(settings, 'DEBUG', False):
                 dev_reset_url = reset_url
 
     response_data = {
         "success": True,
         "message": "If an account exists with this email address, password reset instructions have been dispatched."
     }
-    if dev_reset_url:
+    if dev_reset_url and getattr(settings, 'DEBUG', False):
         response_data["reset_url"] = dev_reset_url
 
     return JsonResponse(response_data, status=200)
@@ -896,7 +1021,7 @@ def order_create(request):
 
     resource_id = data.get('resource_id')
     resource_slug = data.get('resource_slug')
-    gateway_id = data.get('gateway_id', 'jazzcash').lower().strip()
+    gateway_id = str(data.get('gateway_id') or data.get('payment_gateway') or 'direct_transfer').lower().strip()
 
     if resource_id:
         resource = get_object_or_404(Resource, id=resource_id, is_published=True)
@@ -921,6 +1046,7 @@ def order_create(request):
 
     locked_amount = resource.price
     currency = resource.currency
+    customer_note = str(data.get('customer_note') or data.get('note') or data.get('notes') or '').strip()
 
     order = Order.objects.create(
         order_reference=unique_ref,
@@ -930,6 +1056,7 @@ def order_create(request):
         currency=currency,
         payment_gateway=gateway_id,
         status='pending',
+        customer_note=customer_note,
     )
 
     gateway = get_payment_gateway(gateway_id)
@@ -1022,6 +1149,15 @@ def payment_callback(request, gateway_name):
 
     with transaction.atomic():
         order = Order.objects.select_for_update().get(id=order.id)
+
+        # Do not allow callbacks to resurrect or alter already refunded or cancelled orders
+        if order.status in ('refunded', 'cancelled'):
+            return JsonResponse({
+                "success": False,
+                "message": f"Order {order.order_reference} is in final state '{order.status}' and cannot be modified.",
+                "status": order.status
+            }, status=400)
+
         if verification.is_valid and verification.is_paid:
             if order.status != 'paid':
                 order.status = 'paid'
@@ -1049,8 +1185,39 @@ def payment_callback(request, gateway_name):
                 return HttpResponseRedirect(f"{frontend_url}/checkout/result/?order_ref={order.order_reference}&status=success")
 
             return JsonResponse({"success": True, "status": "paid", "order_reference": order.order_reference})
+
+        elif verification.is_valid and not verification.is_paid:
+            # Direct Transfer or queued verification: requires manual admin approval
+            if order.status not in ('paid', 'refunded', 'cancelled'):
+                order.status = 'pending_verification'
+                order.gateway_reference = verification.gateway_reference or order.gateway_reference
+                order.gateway_response_data = data
+                tid = str(data.get('transaction_id') or data.get('tid') or '').strip().upper()
+                sender = str(data.get('sender_phone') or data.get('mobile_number') or '').strip()
+                customer_note = str(data.get('customer_note') or data.get('note') or data.get('notes') or '').strip()
+                if tid:
+                    order.transaction_id = tid
+                if sender:
+                    order.sender_phone = sender
+                if customer_note:
+                    order.customer_note = customer_note
+                order.save()
+
+                send_payment_received_pending_verification(order)
+
+            if request.method == 'GET' or 'text/html' in request.META.get('HTTP_ACCEPT', ''):
+                frontend_url = getattr(settings, 'FRONTEND_BASE_URL', 'http://localhost:3001')
+                return HttpResponseRedirect(f"{frontend_url}/checkout/result/?order_ref={order.order_reference}&status=pending_verification")
+
+            return JsonResponse({
+                "success": True,
+                "status": "pending_verification",
+                "order_reference": order.order_reference,
+                "message": "Payment submitted. An administrator will verify the transfer within 15-30 minutes."
+            }, status=200)
+
         else:
-            if order.status == 'pending':
+            if order.status not in ('refunded', 'cancelled', 'paid'):
                 order.status = 'failed'
                 order.gateway_response_data = data
                 order.save()
@@ -1072,10 +1239,20 @@ def payment_callback(request, gateway_name):
 def sandbox_simulate_payment(request):
     """
     Developer & verification endpoint simulating instant payment confirmation.
-    Valid only when PAYMENT_SANDBOX_ENABLED is true.
+    CRITICAL SECURITY RULES:
+    1. Strictly disabled if PAYMENT_SANDBOX_ENABLED is False or in production.
+    2. Accessible ONLY by authenticated staff/superusers or the automated backend test runner.
+       Never accessible to ordinary students or anonymous visitors.
     """
-    if not getattr(settings, 'PAYMENT_SANDBOX_ENABLED', True):
-        return JsonResponse({"error": "Sandbox payment simulation is disabled."}, status=403)
+    if not getattr(settings, 'PAYMENT_SANDBOX_ENABLED', False):
+        return JsonResponse({"error": "Sandbox payment simulation is disabled on this server."}, status=403)
+
+    import sys
+    is_staff = request.user.is_authenticated and (request.user.is_staff or request.user.is_superuser)
+    is_test_suite = ('test' in sys.argv) or (request.META.get('HTTP_X_TEST_SUITE') == '1')
+
+    if not (is_staff or is_test_suite):
+        return JsonResponse({"error": "Access denied. Sandbox simulation requires administrator privileges."}, status=403)
 
     try:
         data = json.loads(request.body)
@@ -1091,12 +1268,16 @@ def sandbox_simulate_payment(request):
     except Order.DoesNotExist:
         return JsonResponse({"error": "Order not found."}, status=404)
 
+    if order.payment_gateway != 'sandbox':
+        return JsonResponse({"error": "This order was not created using the sandbox gateway."}, status=400)
+
     gateway = SandboxPaymentGateway()
     verification = gateway.verify_payment(data, order=order)
 
     if verification.is_valid and verification.is_paid:
         with transaction.atomic():
-            if order.status != 'paid':
+            order = Order.objects.select_for_update().get(id=order.id)
+            if order.status not in ('refunded', 'cancelled') and order.status != 'paid':
                 order.status = 'paid'
                 order.paid_at = timezone.now()
                 order.gateway_reference = verification.gateway_reference
@@ -1121,7 +1302,7 @@ def sandbox_simulate_payment(request):
             "success": True,
             "status": "paid",
             "order_reference": order.order_reference,
-            "message": "Payment verified and purchase access granted."
+            "message": "Payment verified and purchase access granted (Sandbox mode)."
         }, status=200)
 
     return JsonResponse({"success": False, "error": verification.error_message}, status=400)
@@ -1845,12 +2026,15 @@ def admin_bulk_update_structure(request):
 def admin_orders_list(request):
     """
     Lists orders with filtering, search, and revenue summary metrics for staff.
+    Supports auditing transaction IDs, sender phones, manual approvals and refunds.
     """
     qs = Order.objects.all().select_related(
         'student',
         'resource__class_subject__class_level',
-        'resource__class_subject__subject'
-    )
+        'resource__class_subject__subject',
+        'verified_by',
+        'refunded_by'
+    ).order_by('-created_at')
 
     query = request.GET.get('q', '').strip()
     status_filter = request.GET.get('status', '').strip()
@@ -1862,7 +2046,9 @@ def admin_orders_list(request):
             Q(student__email__icontains=query) |
             Q(student__first_name__icontains=query) |
             Q(resource__title__icontains=query) |
-            Q(gateway_reference__icontains=query)
+            Q(gateway_reference__icontains=query) |
+            Q(transaction_id__icontains=query) |
+            Q(sender_phone__icontains=query)
         )
 
     if status_filter:
@@ -1873,6 +2059,7 @@ def admin_orders_list(request):
 
     total_orders = qs.count()
     paid_orders = qs.filter(status='paid')
+    pending_verification_count = qs.filter(status='pending_verification').count()
     total_revenue = sum(o.amount for o in paid_orders)
 
     orders_data = [
@@ -1890,8 +2077,16 @@ def admin_orders_list(request):
             "currency": o.currency,
             "payment_gateway": o.payment_gateway,
             "gateway_reference": o.gateway_reference,
+            "transaction_id": o.transaction_id,
+            "sender_phone": o.sender_phone,
+            "customer_note": o.customer_note,
             "status": o.status,
             "status_display": o.get_status_display(),
+            "verified_by": o.verified_by.username if o.verified_by else None,
+            "verified_at": o.verified_at.isoformat() if o.verified_at else None,
+            "rejection_reason": o.rejection_reason,
+            "refund_status": o.refund_status,
+            "refund_reason": o.refund_reason,
             "created_at": o.created_at.isoformat(),
             "paid_at": o.paid_at.isoformat() if o.paid_at else None,
         }
@@ -1902,6 +2097,7 @@ def admin_orders_list(request):
         "total": total_orders,
         "total_orders": total_orders,
         "paid_orders_count": paid_orders.count(),
+        "pending_verification_count": pending_verification_count,
         "total_revenue_pkr": str(total_revenue),
         "orders": orders_data,
     }, status=200)
@@ -1911,10 +2107,16 @@ def admin_orders_list(request):
 @admin_required
 def admin_order_detail(request, order_id):
     """
-    Returns complete order metadata, transaction references, and associated purchase status.
+    Returns complete order metadata, transaction references, audit trail, and associated purchase status.
     """
     order = get_object_or_404(
-        Order.objects.select_related('student', 'resource__class_subject__class_level', 'resource__class_subject__subject'),
+        Order.objects.select_related(
+            'student',
+            'resource__class_subject__class_level',
+            'resource__class_subject__subject',
+            'verified_by',
+            'refunded_by'
+        ),
         id=order_id
     )
     purchase = getattr(order, 'purchase', None)
@@ -1939,8 +2141,24 @@ def admin_order_detail(request, order_id):
         "currency": order.currency,
         "payment_gateway": order.payment_gateway,
         "gateway_reference": order.gateway_reference,
+        "transaction_id": order.transaction_id,
+        "sender_phone": order.sender_phone,
+        "customer_note": order.customer_note,
         "status": order.status,
         "status_display": order.get_status_display(),
+        "verified_by": {
+            "id": order.verified_by.id,
+            "username": order.verified_by.username
+        } if order.verified_by else None,
+        "verified_at": order.verified_at.isoformat() if order.verified_at else None,
+        "rejection_reason": order.rejection_reason,
+        "refund_status": order.refund_status,
+        "refund_reason": order.refund_reason,
+        "refund_provider_reference": order.refund_provider_reference,
+        "refunded_by": {
+            "id": order.refunded_by.id,
+            "username": order.refunded_by.username
+        } if order.refunded_by else None,
         "gateway_response_data": order.gateway_response_data,
         "created_at": order.created_at.isoformat(),
         "paid_at": order.paid_at.isoformat() if order.paid_at else None,
@@ -1956,10 +2174,124 @@ def admin_order_detail(request, order_id):
 
 @csrf_exempt
 @admin_required
+def admin_order_approve_payment(request, order_id):
+    """
+    Controlled administrative approval for pending orders (Direct Transfer / Bank TID).
+    Atomically transitions order to 'paid', records verified_by and verified_at,
+    grants student purchase access, and dispatches an approval notification email.
+    """
+    if request.method != 'POST':
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    with transaction.atomic():
+        try:
+            order = Order.objects.select_for_update().select_related('student', 'resource').get(id=order_id)
+        except Order.DoesNotExist:
+            return JsonResponse({"error": "Order not found."}, status=404)
+
+        if order.status == 'paid':
+            return JsonResponse({
+                "success": True,
+                "message": f"Order {order.order_reference} is already marked as paid.",
+                "order_id": order.id,
+                "status": "paid"
+            }, status=200)
+
+        if order.status in ('refunded', 'cancelled'):
+            return JsonResponse({
+                "error": f"Cannot approve order in final status '{order.status}'."
+            }, status=400)
+
+        order.status = 'paid'
+        order.paid_at = timezone.now()
+        order.verified_by = request.user
+        order.verified_at = timezone.now()
+        order.rejection_reason = ''
+        order.save()
+
+        purchase, created = Purchase.objects.get_or_create(
+            student=order.student,
+            resource=order.resource,
+            defaults={'order': order, 'is_active': True}
+        )
+        if not created and not purchase.is_active:
+            purchase.is_active = True
+            purchase.order = order
+            purchase.revoked_at = None
+            purchase.revocation_reason = ''
+            purchase.save()
+
+        send_payment_approved_notification(order)
+
+    return JsonResponse({
+        "success": True,
+        "order_id": order.id,
+        "order_reference": order.order_reference,
+        "status": "paid",
+        "verified_by": request.user.username,
+        "verified_at": order.verified_at.isoformat(),
+        "message": f"Order {order.order_reference} approved successfully. Access granted and confirmation email sent."
+    }, status=200)
+
+
+@csrf_exempt
+@admin_required
+def admin_order_reject_payment(request, order_id):
+    """
+    Controlled administrative rejection of invalid or unverified direct transfers.
+    Atomically transitions order to 'rejected', records rejection reason and admin auditor,
+    revokes access if active, and sends notification email.
+    """
+    if request.method != 'POST':
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    try:
+        data = json.loads(request.body)
+    except Exception:
+        data = request.POST
+
+    reason = str(data.get('reason', '')).strip()
+    if not reason:
+        reason = "Payment could not be verified in our official account ledger. Transaction ID may be invalid or amount mismatched."
+
+    with transaction.atomic():
+        try:
+            order = Order.objects.select_for_update().select_related('student', 'resource').get(id=order_id)
+        except Order.DoesNotExist:
+            return JsonResponse({"error": "Order not found."}, status=404)
+
+        order.status = 'rejected'
+        order.verified_by = request.user
+        order.verified_at = timezone.now()
+        order.rejection_reason = reason
+        order.save()
+
+        if hasattr(order, 'purchase'):
+            order.purchase.is_active = False
+            order.purchase.revoked_at = timezone.now()
+            order.purchase.revocation_reason = f"Payment rejected by admin: {reason}"
+            order.purchase.save()
+
+        send_payment_rejected_notification(order, reason=reason)
+
+    return JsonResponse({
+        "success": True,
+        "order_id": order.id,
+        "order_reference": order.order_reference,
+        "status": "rejected",
+        "verified_by": request.user.username,
+        "rejection_reason": reason,
+        "message": f"Order {order.order_reference} marked as rejected."
+    }, status=200)
+
+
+@csrf_exempt
+@admin_required
 def admin_order_refund(request, order_id):
     """
     Controlled administrative refund & access revocation.
-    Marks order as refunded and deactivates the student's purchase download grant.
+    Marks order as refunded, distinguishes internal approval vs provider reference,
+    and deactivates the student's purchase download grant.
     """
     if request.method != 'POST':
         return JsonResponse({"error": "Method not allowed"}, status=405)
@@ -1970,10 +2302,16 @@ def admin_order_refund(request, order_id):
     except Exception:
         data = request.POST
 
-    reason = data.get('reason', 'Administrative refund / access revocation').strip()
+    reason = str(data.get('reason', 'Administrative refund / access revocation')).strip()
+    provider_ref = str(data.get('provider_reference', '')).strip()
 
     with transaction.atomic():
         order.status = 'refunded'
+        order.refund_status = 'approved_internal'
+        order.refund_reason = reason
+        order.refunded_by = request.user
+        if provider_ref:
+            order.refund_provider_reference = provider_ref
         order.save()
 
         if hasattr(order, 'purchase'):
@@ -1987,6 +2325,7 @@ def admin_order_refund(request, order_id):
         "order_id": order.id,
         "order_reference": order.order_reference,
         "status": "refunded",
+        "refund_status": order.refund_status,
         "message": f"Order {order.order_reference} marked as refunded and student access revoked."
     }, status=200)
 
@@ -2206,11 +2545,16 @@ def practice_session_start(request, topic_slug):
             ).first()
 
     if not session:
+        guest_sec = uuid.uuid4().hex if not request.user.is_authenticated else ''
         session = PracticeSession.objects.create(
             student=request.user if request.user.is_authenticated else None,
             guest_identifier=guest_id if not request.user.is_authenticated else '',
+            guest_secret=guest_sec,
             topic=topic,
         )
+    elif not request.user.is_authenticated and not session.guest_secret:
+        session.guest_secret = uuid.uuid4().hex
+        session.save(update_fields=['guest_secret'])
 
     # Fetch questions
     q_filter = Q(topic=topic, is_published=True)
@@ -2280,6 +2624,7 @@ def practice_session_start(request, topic_slug):
     return JsonResponse({
         "session_id": session.id,
         "session_uuid": str(session.session_uuid),
+        "guest_secret": session.guest_secret or "",
         "is_completed": session.is_completed,
         "score": session.score,
         "correct_answers": session.correct_answers,
@@ -2331,6 +2676,22 @@ def practice_question_submit(request, question_id):
         session = PracticeSession.objects.get(session_uuid=session_uuid)
     except PracticeSession.DoesNotExist:
         return JsonResponse({"error": "Practice session not found"}, status=404)
+
+    # Session Ownership Validation
+    if session.student:
+        if not request.user.is_authenticated or request.user.id != session.student_id:
+            return JsonResponse({"error": "You do not have permission to submit answers for this practice session."}, status=403)
+    else:
+        client_secret = data.get('guest_secret') or request.headers.get('X-Guest-Secret')
+        client_guest_id = data.get('guest_identifier')
+        if client_secret and session.guest_secret and client_secret != session.guest_secret:
+            return JsonResponse({"error": "Unauthorized access to guest practice session."}, status=403)
+        if client_guest_id and session.guest_identifier and client_guest_id != session.guest_identifier:
+            return JsonResponse({"error": "Unauthorized access to guest practice session."}, status=403)
+
+    # Anti-Tampering: Reject answers on completed sessions
+    if session.is_completed:
+        return JsonResponse({"error": "This practice session has already been completed and cannot be modified."}, status=400)
 
     # Validate that question belongs to the session topic
     if question.topic_id != session.topic_id:
@@ -2446,6 +2807,22 @@ def practice_session_finish(request, session_uuid):
         ).get(session_uuid=session_uuid)
     except PracticeSession.DoesNotExist:
         return JsonResponse({"error": "Practice session not found"}, status=404)
+
+    # Session Ownership Validation
+    if session.student:
+        if not request.user.is_authenticated or request.user.id != session.student_id:
+            return JsonResponse({"error": "You do not have permission to finalize this practice session."}, status=403)
+    else:
+        try:
+            data = json.loads(request.body)
+        except Exception:
+            data = request.POST
+        client_secret = data.get('guest_secret') or request.headers.get('X-Guest-Secret')
+        client_guest_id = data.get('guest_identifier')
+        if client_secret and session.guest_secret and client_secret != session.guest_secret:
+            return JsonResponse({"error": "Unauthorized access to guest practice session."}, status=403)
+        if client_guest_id and session.guest_identifier and client_guest_id != session.guest_identifier:
+            return JsonResponse({"error": "Unauthorized access to guest practice session."}, status=403)
 
     total_attempts = session.attempts.count()
     correct_count = session.attempts.filter(is_correct=True).count()
@@ -3149,6 +3526,50 @@ DEFAULT_PAGE_CONTENTS = {
                 'For order or payment verification issues, include your Order ID and payment transaction reference (TID).'
             ]
         }
+    },
+    'payment_settings': {
+        'title': 'Payment Accounts & Verification Instructions',
+        'subtitle': 'Manage official receiving accounts (JazzCash, Easypaisa, Bank Accounts) and student payment verification steps.',
+        'data': {
+            'whatsapp_number': '0300-1234567',
+            'instructions_steps': [
+                'Pay PKR {price} on this number or bank account from any of the official receiving accounts shown below.',
+                'Take a clear screenshot of the completed transaction confirmation receipt.',
+                'Send the screenshot on this WhatsApp number: {whatsapp} along with your Order Reference.',
+                'Enter your sender mobile number and Transaction ID (TID) below and click Submit.',
+                'Wait for verification. Your offline PDF download will be automatically unlocked as soon as verified by our team.'
+            ],
+            'notice_text': 'Never share your mobile wallet PIN, MPIN, or banking password with anyone. FBISE staff will never ask for your account PIN.',
+            'accounts': [
+                {
+                    'id': 'jazzcash-1',
+                    'provider': 'JazzCash',
+                    'account_title': 'FBISE Educational Notes Official',
+                    'account_number': '0300-8889999',
+                    'iban': '',
+                    'is_active': True,
+                    'notes': 'JazzCash Mobile Account / Raast'
+                },
+                {
+                    'id': 'easypaisa-1',
+                    'provider': 'Easypaisa',
+                    'account_title': 'FBISE Educational Notes Official',
+                    'account_number': '0300-8889999',
+                    'iban': '',
+                    'is_active': True,
+                    'notes': 'Easypaisa Mobile Account'
+                },
+                {
+                    'id': 'bank-1',
+                    'provider': 'Bank Alfalah / Raast',
+                    'account_title': 'FBISE Educational Notes Official',
+                    'account_number': '03008889999',
+                    'iban': 'PK00ALFH0000000000000000',
+                    'is_active': True,
+                    'notes': 'Direct Transfer / Instant Raast / 1Link'
+                }
+            ]
+        }
     }
 }
 
@@ -3177,9 +3598,9 @@ def get_page_content(request, page_key):
 
 @admin_required
 def admin_get_all_pages(request):
-    """Admin endpoint to retrieve all editable site pages."""
+    """Admin endpoint to retrieve all editable site pages and settings."""
     pages = {}
-    for key in ('about', 'contact'):
+    for key in ('about', 'contact', 'payment_settings'):
         record = SitePageContent.objects.filter(page_key=key).first()
         if not record:
             default = DEFAULT_PAGE_CONTENTS[key]
@@ -3245,6 +3666,31 @@ def admin_update_page_content(request, page_key):
             "updated_at": record.updated_at.isoformat(),
         }
     }, status=200)
+
+
+def get_payment_settings(request):
+    """Public endpoint to fetch current verified payment receiving accounts and instructions."""
+    record = SitePageContent.objects.filter(page_key='payment_settings').first()
+    if not record:
+        default = DEFAULT_PAGE_CONTENTS['payment_settings']
+        record = SitePageContent.objects.create(
+            page_key='payment_settings',
+            title=default['title'],
+            subtitle=default['subtitle'],
+            data=default['data']
+        )
+    data = record.data if isinstance(record.data, dict) else {}
+    return JsonResponse({
+        "success": True,
+        "title": record.title,
+        "subtitle": record.subtitle,
+        "whatsapp_number": data.get('whatsapp_number', '0300-1234567'),
+        "instructions_steps": data.get('instructions_steps', []),
+        "notice_text": data.get('notice_text', ''),
+        "accounts": data.get('accounts', []),
+        "updated_at": record.updated_at.isoformat() if record.updated_at else None,
+    }, status=200)
+
 
 
 

@@ -70,3 +70,8 @@ Thumbs.db
 
 # Docker
 docker-compose.override.yml
+
+# Backups
+backups/
+*.sql
+*.tar.gz

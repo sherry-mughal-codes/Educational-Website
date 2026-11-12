@@ -6,6 +6,7 @@ Configured dynamically using environment variables for Docker and production rea
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -25,6 +26,11 @@ SECRET_KEY = os.environ.get(
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get('DJANGO_DEBUG', '1').strip().lower() in ('1', 'true', 'yes')
+
+if not DEBUG and (not SECRET_KEY or 'fallback-dev' in SECRET_KEY or 'change_me' in SECRET_KEY):
+    raise ImproperlyConfigured(
+        "In production (DJANGO_DEBUG=0), a secure, non-default DJANGO_SECRET_KEY must be provided via environment variables."
+    )
 
 ALLOWED_HOSTS = [
     host.strip()
@@ -161,6 +167,25 @@ SESSION_COOKIE_SAMESITE = 'Lax'
 CSRF_COOKIE_SAMESITE = 'Lax'
 SESSION_COOKIE_HTTPONLY = True
 
+if not DEBUG:
+    SECURE_BROWSER_XSS_FILTER = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    X_FRAME_OPTIONS = 'SAMEORIGIN'
+    SESSION_COOKIE_SECURE = os.environ.get('SESSION_COOKIE_SECURE', 'true').strip().lower() in ('1', 'true', 'yes')
+    CSRF_COOKIE_SECURE = os.environ.get('CSRF_COOKIE_SECURE', 'true').strip().lower() in ('1', 'true', 'yes')
+
+# Caching Architecture for Rate Limiting & Session Protection
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'fbise-security-cache',
+        'TIMEOUT': 900,
+        'OPTIONS': {
+            'MAX_ENTRIES': 20000,
+        }
+    }
+}
+
 # Upload limits (Default: 50MB, configurable via environment variable)
 MAX_UPLOAD_SIZE_MB = int(os.environ.get('MAX_UPLOAD_SIZE_MB', '50'))
 DATA_UPLOAD_MAX_MEMORY_SIZE = MAX_UPLOAD_SIZE_MB * 1024 * 1024
@@ -190,9 +215,21 @@ _configured_backend = os.environ.get('EMAIL_BACKEND', '').strip()
 EMAIL_BACKEND = _configured_backend if _configured_backend else _default_backend
 PASSWORD_RESET_TIMEOUT = 259200  # 3 days in seconds
 
-# Payment Gateway Configuration (Pakistan: JazzCash, Easypaisa, Sandbox)
-PAYMENT_GATEWAY_DEFAULT = os.environ.get('PAYMENT_GATEWAY_DEFAULT', 'jazzcash')
-PAYMENT_SANDBOX_ENABLED = os.environ.get('PAYMENT_SANDBOX_ENABLED', 'true').strip().lower() in ('1', 'true', 'yes')
+# Payment Gateway Configuration (Pakistan: JazzCash, Easypaisa, Direct Transfer, Sandbox)
+PAYMENT_GATEWAY_DEFAULT = os.environ.get('PAYMENT_GATEWAY_DEFAULT', 'direct_transfer')
+# Sandbox is disabled by default in production (DEBUG=False)
+_default_sandbox = 'false' if not DEBUG else 'true'
+PAYMENT_SANDBOX_ENABLED = os.environ.get('PAYMENT_SANDBOX_ENABLED', _default_sandbox).strip().lower() in ('1', 'true', 'yes')
+
+# Direct Transfer Platform Credentials (Configurable via environment)
+DIRECT_TRANSFER_ACCOUNT_TITLE = os.environ.get('DIRECT_TRANSFER_ACCOUNT_TITLE', 'FBISE Educational Notes Official')
+DIRECT_TRANSFER_ACCOUNT_NUMBER = os.environ.get('DIRECT_TRANSFER_ACCOUNT_NUMBER', '0300-8889999')
+DIRECT_TRANSFER_BANK_NAME = os.environ.get('DIRECT_TRANSFER_BANK_NAME', 'JazzCash / Easypaisa / Raast')
+DIRECT_TRANSFER_IBAN = os.environ.get('DIRECT_TRANSFER_IBAN', '')
+DIRECT_TRANSFER_INSTRUCTIONS = os.environ.get(
+    'DIRECT_TRANSFER_INSTRUCTIONS',
+    'Transfer the exact fee using your JazzCash, Easypaisa, or Mobile Banking app to our verified platform account and submit your Transaction ID (TID) for fast administrative verification.'
+)
 
 JAZZ_CASH_MERCHANT_ID = os.environ.get('JAZZ_CASH_MERCHANT_ID', '')
 JAZZ_CASH_PASSWORD = os.environ.get('JAZZ_CASH_PASSWORD', '')
