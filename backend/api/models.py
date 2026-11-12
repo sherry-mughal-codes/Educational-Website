@@ -233,7 +233,8 @@ class Order(models.Model):
     Preserves exact price and currency agreed upon at the time of order creation.
     """
     STATUS_CHOICES = [
-        ('pending', 'Pending Payment'),
+        ('pending_payment', 'Pending Payment'),
+        ('pending', 'Pending Payment (Legacy)'),
         ('pending_verification', 'Pending Verification'),
         ('paid', 'Paid'),
         ('rejected', 'Payment Rejected'),
@@ -276,13 +277,32 @@ class Order(models.Model):
         db_index=True,
         help_text="External gateway transaction or retrieval reference"
     )
+    receiving_account = models.CharField(
+        max_length=200,
+        blank=True,
+        default='',
+        help_text="Configured receiving account selected by student"
+    )
+    sender_name = models.CharField(
+        max_length=150,
+        blank=True,
+        default='',
+        help_text="Name of sender account holder"
+    )
     sender_phone = models.CharField(max_length=50, blank=True, default='', help_text="Sender mobile/account number")
     transaction_id = models.CharField(max_length=100, blank=True, default='', db_index=True, help_text="TID submitted by student")
+    payment_screenshot = models.FileField(
+        upload_to='payment_receipts/%Y/%m/',
+        null=True,
+        blank=True,
+        help_text="Optional payment receipt / screenshot evidence"
+    )
+    paid_at_submitted = models.DateTimeField(null=True, blank=True, help_text="Payment date and time submitted by student")
     customer_note = models.TextField(blank=True, default='', help_text="Optional customer note or details submitted during checkout")
     status = models.CharField(
         max_length=25,
         choices=STATUS_CHOICES,
-        default='pending',
+        default='pending_payment',
         db_index=True
     )
     verified_by = models.ForeignKey(

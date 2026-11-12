@@ -37,15 +37,16 @@ urlpatterns = [
     # Student Dashboard
     path('student/dashboard/', views.student_dashboard, name='student_dashboard'),
 
-    # Orders, Payment Gateways & Checkout
+    # Orders, Manual Payment Verification & Checkout
     path('orders/create/', views.order_create, name='order_create'),
     path('orders/<str:order_reference>/status/', views.order_status, name='order_status'),
+    path('orders/<str:order_reference>/submit-payment/', views.order_submit_manual_payment, name='order_submit_manual_payment'),
     path('gateways/', views.payment_gateways_list, name='payment_gateways_list'),
     path('payments/gateways/', views.payment_gateways_list, name='payment_gateways_list_alias'),
     path('payments/callback/<str:gateway_name>/', views.payment_callback, name='payment_callback'),
     path('payments/<str:gateway_name>/callback/', views.payment_callback, name='payment_callback_alias'),
-    path('payments/sandbox-pay/', views.sandbox_simulate_payment, name='sandbox_simulate_payment'),
     path('payments/settings/', views.get_payment_settings, name='get_payment_settings'),
+    path('auth/csrf/', views.get_csrf_token, name='get_csrf_token'),
 
     # Admin Authentication
     path('admin/auth/login/', views.admin_login, name='admin_login'),

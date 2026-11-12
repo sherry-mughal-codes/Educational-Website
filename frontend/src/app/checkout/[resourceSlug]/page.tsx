@@ -6,13 +6,11 @@ import { useParams, useRouter } from 'next/navigation';
 import {
   studentGetMe,
   createOrder,
-  getPaymentGateways,
-  submitPaymentCallback,
+  submitManualPayment,
   getPaymentSettings,
   PaymentSettingsResponse,
   PaymentAccountItem,
   StudentUser,
-  GatewayItem,
   ResourceItem,
 } from '@/lib/api';
 import { trackEvent } from '@/lib/analytics';
@@ -24,12 +22,12 @@ export default function CheckoutPage() {
 
   const [student, setStudent] = useState<StudentUser | null>(null);
   const [resource, setResource] = useState<ResourceItem | null>(null);
-  const [gateways, setGateways] = useState<GatewayItem[]>([]);
-  const [selectedGateway, setSelectedGateway] = useState<string>('direct_transfer');
   const [paymentSettings, setPaymentSettings] = useState<PaymentSettingsResponse | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // Direct Transfer / Mobile Wallet Verification Fields
+  // Manual Payment Verification Fields
+  const [selectedAccount, setSelectedAccount] = useState('');
+  const [senderName, setSenderName] = useState('');
   const [senderPhone, setSenderPhone] = useState('');
   const [tid, setTid] = useState('');
   const [customerNote, setCustomerNote] = useState('');
@@ -38,6 +36,7 @@ export default function CheckoutPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [processingStep, setProcessingStep] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [requiresVerification, setRequiresVerification] = useState(false);
   const [alreadyOwned, setAlreadyOwned] = useState(false);
 
   useEffect(() => {
@@ -46,79 +45,78 @@ export default function CheckoutPage() {
       .then((res) => {
         if (res.authenticated && res.user) {
           setStudent(res.user);
+          if (res.user.full_name) {
+            setSenderName(res.user.full_name);
+          }
         }
       })
       .catch(() => {});
 
-    // 2. Fetch gateways (JazzCash, Easypaisa, and Direct Transfer)
-    getPaymentGateways()
-      .then((gwList) => {
-        const allowed = ['direct_transfer', 'jazzcash', 'easypaisa'];
-        const filtered = (gwList || []).filter((gw) => allowed.includes(gw.id));
-        setGateways(filtered);
-        if (filtered.length > 0) {
-          setSelectedGateway(filtered[0].id);
-        }
-      })
-      .catch(() => {});
-
-    // 2b. Fetch dynamic admin-configured receiving accounts and steps
+    // 2. Fetch dynamic admin-configured receiving accounts and steps
     getPaymentSettings()
       .then((settings) => {
         if (settings) {
           setPaymentSettings(settings);
+          const active = (settings.accounts || []).filter((a) => a.is_active !== false);
+          if (active.length > 0) {
+            setSelectedAccount(`${active[0].provider} - ${active[0].account_number}`);
+          }
         }
       })
       .catch(() => {});
 
     // 3. Fetch resource data directly by unique slug
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-    fetch(`${apiUrl}/api/resources/by-slug/${encodeURIComponent(resourceSlug)}/`, {
-      credentials: 'include',
-      cache: 'no-store',
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error('Resource not found');
-        return res.json();
-      })
-      .then((resData: ResourceItem) => {
-        setResource(resData);
-        if (resData.user_has_purchased) {
-          setAlreadyOwned(true);
+    async function loadResource() {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      try {
+        const directRes = await fetch(`${apiUrl}/api/resources/by-slug/${encodeURIComponent(resourceSlug)}/`, {
+          credentials: 'include',
+          cache: 'no-store',
+        });
+        if (directRes.ok) {
+          const resData: ResourceItem = await directRes.json();
+          setResource(resData);
+          if (resData.user_has_purchased) {
+            setAlreadyOwned(true);
+          }
+          setErrorMessage(null);
+          return;
         }
-        setErrorMessage(null);
-      })
-      .catch(() => {
-        fetch(`${apiUrl}/api/resources/?q=${encodeURIComponent(resourceSlug)}`, { cache: 'no-store' })
-          .then((res) => res.json())
-          .then((data) => {
-            const match = (data.results || []).find((r: ResourceItem) => r.slug === resourceSlug);
-            if (match) {
-              fetch(`${apiUrl}/api/resources/${match.class_slug || match.class?.slug}/${match.subject_slug || match.subject?.slug}/${match.slug}/`, {
-                credentials: 'include',
-                cache: 'no-store',
-              })
-                .then((r) => r.json())
-                .then((resData: ResourceItem) => {
-                  setResource(resData);
-                  if (resData.user_has_purchased) {
-                    setAlreadyOwned(true);
-                  }
-                  setErrorMessage(null);
-                })
-                .catch(() => setErrorMessage('Failed to load study guide details.'));
-            } else {
-              setErrorMessage('Resource could not be found.');
+
+        // Fallback search
+        const searchRes = await fetch(`${apiUrl}/api/resources/?q=${encodeURIComponent(resourceSlug)}`, { cache: 'no-store' });
+        if (searchRes.ok) {
+          const searchData = await searchRes.json();
+          const match = (searchData.results || []).find((r: ResourceItem) => r.slug === resourceSlug);
+          if (match) {
+            const classSlug = match.class_slug || match.class?.slug;
+            const subjectSlug = match.subject_slug || match.subject?.slug;
+            const detailRes = await fetch(`${apiUrl}/api/resources/${classSlug}/${subjectSlug}/${match.slug}/`, {
+              credentials: 'include',
+              cache: 'no-store',
+            });
+            if (detailRes.ok) {
+              const resData: ResourceItem = await detailRes.json();
+              setResource(resData);
+              if (resData.user_has_purchased) {
+                setAlreadyOwned(true);
+              }
+              setErrorMessage(null);
+              return;
             }
-          })
-          .catch(() => {
-            setErrorMessage('Failed to connect to FBISE server.');
-          });
-      })
-      .finally(() => setIsLoading(false));
+          }
+        }
+        setErrorMessage('Educational resource could not be found.');
+      } catch {
+        setErrorMessage('Failed to connect to FBISE server.');
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    loadResource();
   }, [resourceSlug]);
 
-  const activeGw = gateways.find((g) => g.id === selectedGateway);
   const displayPrice = resource?.price ? Number(resource.price).toLocaleString('en-PK') : '...';
 
   const handleCopy = (text: string, id: string) => {
@@ -141,9 +139,20 @@ export default function CheckoutPage() {
       return;
     }
 
+    // Client-side validations
+    if (!selectedAccount.trim()) {
+      setErrorMessage('Please select the receiving account where you sent the payment.');
+      return;
+    }
+
+    if (!senderName.trim() || senderName.trim().length < 2) {
+      setErrorMessage('Please enter the sender account name/title.');
+      return;
+    }
+
     const cleanPhone = senderPhone.trim().replace(/\D/g, '');
     if (!cleanPhone || cleanPhone.length < 10) {
-      setErrorMessage('Please enter a valid sender phone number (e.g. 03001234567).');
+      setErrorMessage('Please enter a valid sender phone number (e.g. 03001234567, minimum 10 digits).');
       return;
     }
 
@@ -159,56 +168,61 @@ export default function CheckoutPage() {
         items: [{ item_id: resource.id, item_name: resource.title, price: priceNum }],
       });
 
-      const returnUrl = `${window.location.origin}/checkout/result/`;
-      const result = await createOrder({
+      // 1. Create order
+      const orderRes = await createOrder({
         resource_id: resource.id,
-        gateway_id: selectedGateway,
-        return_url: returnUrl,
         customer_note: customerNote.trim(),
       });
 
-      if (result.already_owned) {
+      if (orderRes.already_owned) {
         setAlreadyOwned(true);
         setIsSubmitting(false);
         setProcessingStep(null);
         return;
       }
 
-      if (!result.success || !result.order_reference) {
-        setErrorMessage(result.error || 'Failed to initiate order.');
+      if (orderRes.requires_email_verification) {
+        setRequiresVerification(true);
+        setErrorMessage(orderRes.error || 'Email verification is required before placing orders.');
         setIsSubmitting(false);
         setProcessingStep(null);
         return;
       }
 
-      const orderRef = result.order_reference;
-
-      // If gateway is live with automated hosted checkout (e.g. corporate merchant portal)
-      if (activeGw?.is_live && result.payment?.action_url) {
-        window.location.href = result.payment.action_url;
+      if (!orderRes.success || !orderRes.order_reference) {
+        setErrorMessage(orderRes.error || 'Failed to create order.');
+        setIsSubmitting(false);
+        setProcessingStep(null);
         return;
       }
 
-      // Authentic Pakistani verification workflow: submit TID and phone for administrator approval
-      setProcessingStep('Submitting payment details for verification...');
+      const orderRef = orderRes.order_reference;
 
-      const callbackPayload = {
-        order_reference: orderRef,
-        amount: resource.price,
-        sender_phone: senderPhone.trim(),
-        transaction_id: tid.trim(),
-        customer_note: customerNote.trim(),
+      // 2. Submit manual payment verification evidence
+      setProcessingStep('Submitting payment evidence for verification...');
+
+      const payload: Record<string, any> = {
+        sender_name: senderName.trim(),
+        sender_phone: cleanPhone,
+        receiving_account: selectedAccount.trim(),
+        amount: String(resource.price),
       };
+      if (tid.trim()) {
+        payload.transaction_id = tid.trim();
+      }
+      if (customerNote.trim()) {
+        payload.customer_note = customerNote.trim();
+      }
 
-      const verifyRes = await submitPaymentCallback('direct_transfer', callbackPayload);
+      const submitRes = await submitManualPayment(orderRef, payload);
 
-      if (verifyRes.success) {
+      if (submitRes.success) {
         setProcessingStep('✓ Payment details submitted for verification! Redirecting to confirmation...');
         setTimeout(() => {
           router.push(`/checkout/result/?order_ref=${encodeURIComponent(orderRef)}&status=pending_verification`);
-        }, 350);
+        }, 400);
       } else {
-        setErrorMessage(verifyRes.error || 'Submission failed. Please check your transaction details.');
+        setErrorMessage(submitRes.error || 'Payment submission failed. Please verify your transaction details.');
         setIsSubmitting(false);
         setProcessingStep(null);
       }
@@ -258,28 +272,17 @@ export default function CheckoutPage() {
     );
   }
 
-  // Determine dynamic accounts and steps from admin settings
-  const allAccounts = paymentSettings?.accounts?.filter((a) => a.is_active !== false) || [
+  // Determine active dynamic accounts and steps from admin settings
+  const allAccounts: PaymentAccountItem[] = paymentSettings?.accounts?.filter((a) => a.is_active !== false) || [
     {
       id: 'default-1',
-      provider: 'JazzCash / Easypaisa / Raast',
+      provider: 'Bank / JazzCash / Easypaisa',
       account_number: '0300-8889999',
       account_title: 'FBISE Educational Notes Official',
       is_active: true,
-      notes: 'Mobile Wallet / Raast',
+      notes: 'Direct Bank / Mobile Wallet',
     },
   ];
-
-  // Filter accounts according to the student's selected payment tab
-  const displayedAccounts = selectedGateway === 'jazzcash'
-    ? (allAccounts.filter((a) => a.provider.toLowerCase().includes('jazz')).length > 0
-        ? allAccounts.filter((a) => a.provider.toLowerCase().includes('jazz'))
-        : allAccounts)
-    : selectedGateway === 'easypaisa'
-    ? (allAccounts.filter((a) => a.provider.toLowerCase().includes('easy')).length > 0
-        ? allAccounts.filter((a) => a.provider.toLowerCase().includes('easy'))
-        : allAccounts)
-    : allAccounts;
 
   const rawWhatsApp = paymentSettings?.whatsapp_number || '0300-1234567';
   let cleanWhatsApp = rawWhatsApp.replace(/\D/g, '');
@@ -298,10 +301,10 @@ export default function CheckoutPage() {
           .replace(/\{whatsapp\}/g, rawWhatsApp)
       )
     : [
-        `Pay PKR ${displayPrice} on this number or bank account from the options below.`,
-        `Send the transaction screenshot on this number (${rawWhatsApp}) on WhatsApp and wait for your verification.`,
-        `Enter your sender mobile number and Transaction ID (TID) below and submit.`,
-        `Your offline PDF download will be automatically unlocked as soon as verified by our team.`,
+        `Transfer PKR ${displayPrice} to any of our official receiving accounts below.`,
+        `Take a clear screenshot of the completed transfer confirmation receipt.`,
+        `Send the screenshot on our official WhatsApp number (${rawWhatsApp}) for fast approval.`,
+        `Enter your sender name and mobile number below, then click Submit for administrator verification.`,
       ];
 
   return (
@@ -363,22 +366,32 @@ export default function CheckoutPage() {
               <span style={{ color: '#047857', fontWeight: 600 }}>Free (Included)</span>
             </div>
             <div style={{ borderTop: '1px dashed #cbd5e1', paddingTop: '0.5rem', marginTop: '0.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: '0.95rem', fontWeight: 800, color: '#0f172a' }}>Total Amount:</span>
+              <span style={{ fontSize: '0.95rem', fontWeight: 800, color: '#0f172a' }}>Total Payable:</span>
               <span style={{ fontSize: '1.25rem', fontWeight: 900, color: '#047857' }}>PKR {displayPrice}</span>
             </div>
           </div>
         </div>
 
-        {/* Right Column: Student Status & Secure Payment Options */}
+        {/* Right Column: Payment & Verification Details */}
         <div className="checkout-action-card" style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '1.25rem', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
           <h2 style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0f172a', margin: '0 0 0.85rem 0' }}>
-            Payment Method
+            Manual Bank &amp; Wallet Transfer
           </h2>
 
           {errorMessage && (
             <div className="alert-error" role="alert" style={{ marginBottom: '0.85rem', padding: '0.65rem 0.85rem', fontSize: '0.825rem' }}>
               <span className="alert-icon">⚠️</span>
               <span>{errorMessage}</span>
+            </div>
+          )}
+
+          {requiresVerification && (
+            <div style={{ background: '#fef3c7', border: '1px solid #fde68a', borderRadius: '8px', padding: '0.85rem', marginBottom: '1rem', color: '#92400e', fontSize: '0.825rem' }}>
+              <strong>Email Verification Required:</strong> Please check your inbox for our verification email or visit your{' '}
+              <Link href="/student/dashboard/" style={{ textDecoration: 'underline', fontWeight: 700 }}>
+                student dashboard
+              </Link>{' '}
+              to request a new verification link.
             </div>
           )}
 
@@ -419,87 +432,18 @@ export default function CheckoutPage() {
             <form onSubmit={handleStartPayment}>
               {/* Account Pill */}
               <div style={{ background: '#f8fafc', padding: '0.5rem 0.75rem', borderRadius: '6px', border: '1px solid #e2e8f0', marginBottom: '0.85rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem' }}>
-                <span style={{ color: '#64748b' }}>Account:</span>
+                <span style={{ color: '#64748b' }}>Student Account:</span>
                 <strong style={{ color: '#0f172a' }}>{student.full_name || student.email}</strong>
               </div>
 
-              {/* Payment Gateway Radio List */}
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, color: '#334155', marginBottom: '0.45rem', textTransform: 'uppercase' }}>
-                  Choose Payment Method:
-                </label>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
-                  {gateways.map((gw) => (
-                    <label
-                      key={gw.id}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'flex-start',
-                        gap: '0.65rem',
-                        padding: '0.65rem 0.75rem',
-                        borderRadius: '8px',
-                        border: selectedGateway === gw.id ? '2px solid #047857' : '1px solid #cbd5e1',
-                        background: selectedGateway === gw.id ? '#f0fdf4' : '#ffffff',
-                        cursor: 'pointer',
-                        transition: 'all 0.15s ease',
-                      }}
-                    >
-                      <input
-                        type="radio"
-                        name="gateway"
-                        value={gw.id}
-                        checked={selectedGateway === gw.id}
-                        onChange={() => {
-                          setSelectedGateway(gw.id);
-                          setErrorMessage(null);
-                        }}
-                        style={{ marginTop: '0.2rem', accentColor: '#047857' }}
-                      />
-                      <div style={{ flex: 1 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
-                          <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#0f172a' }}>
-                            {gw.id === 'jazzcash'
-                              ? 'JazzCash'
-                              : gw.id === 'easypaisa'
-                              ? 'Easypaisa'
-                              : 'Direct Bank / Raast / Wallet Transfer'}
-                          </span>
-                          <span
-                            style={{
-                              fontSize: '0.68rem',
-                              fontWeight: 700,
-                              color: '#047857',
-                              background: '#ecfdf5',
-                              padding: '0.1rem 0.45rem',
-                              borderRadius: '4px',
-                              border: '1px solid #a7f3d0',
-                            }}
-                          >
-                            Verified Manual Transfer
-                          </span>
-                        </div>
-                        <p style={{ fontSize: '0.75rem', color: '#64748b', margin: '0.15rem 0 0 0' }}>
-                          {gw.id === 'jazzcash'
-                            ? 'Transfer via JazzCash mobile app or retail till & submit receipt TID.'
-                            : gw.id === 'easypaisa'
-                            ? 'Transfer via Easypaisa mobile app or retail shop & submit receipt TID.'
-                            : 'Transfer funds via Bank, Raast, or Mobile Account directly.'}
-                        </p>
-                      </div>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              {/* Dynamic Receiving Accounts & Verification Box */}
+              {/* Official Receiving Accounts Card */}
               <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0.85rem', marginBottom: '1rem' }}>
                 <div style={{ fontWeight: 700, color: '#1e40af', fontSize: '0.825rem', marginBottom: '0.55rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                  <span>🏦</span> Official Receiving Accounts
+                  <span>🏦</span> Step 1: Transfer Funds to Official Account
                 </div>
 
-                {/* Displayed Accounts Cards */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '0.75rem' }}>
-                  {displayedAccounts.map((acc, idx) => (
+                  {allAccounts.map((acc, idx) => (
                     <div
                       key={acc.id || idx}
                       style={{
@@ -522,7 +466,7 @@ export default function CheckoutPage() {
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.25rem' }}>
                         <div>
-                          Account Number: <strong style={{ fontSize: '0.875rem', color: '#047857' }}>{acc.account_number}</strong>
+                          Account / Number: <strong style={{ fontSize: '0.875rem', color: '#047857' }}>{acc.account_number}</strong>
                         </div>
                         <button
                           type="button"
@@ -542,16 +486,16 @@ export default function CheckoutPage() {
                         </button>
                       </div>
                       <div>Account Title: <strong>{acc.account_title}</strong></div>
-                      {acc.iban && <div>IBAN / Raast: <strong>{acc.iban}</strong></div>}
-                      <div>Amount: <strong style={{ color: '#047857' }}>PKR {displayPrice}</strong></div>
+                      {acc.iban && <div>IBAN / Raast ID: <strong>{acc.iban}</strong></div>}
+                      <div>Exact Fee: <strong style={{ color: '#047857' }}>PKR {displayPrice}</strong></div>
                     </div>
                   ))}
                 </div>
 
-                {/* Steps Section configured by Admin */}
+                {/* Verification Guidance */}
                 <div style={{ fontSize: '0.76rem', color: '#475569', marginBottom: '0.75rem', background: '#eff6ff', padding: '0.65rem 0.85rem', borderRadius: '6px', border: '1px solid #bfdbfe' }}>
                   <div style={{ fontWeight: 700, color: '#1e40af', marginBottom: '0.25rem' }}>
-                    Payment &amp; Verification Steps:
+                    Instructions &amp; Verification:
                   </div>
                   <ol style={{ margin: '0.2rem 0 0 1.15rem', padding: 0, display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                     {dynamicSteps.map((step, sIdx) => (
@@ -559,7 +503,7 @@ export default function CheckoutPage() {
                     ))}
                   </ol>
 
-                  {/* One-Tap WhatsApp Screenshot Verification Button */}
+                  {/* WhatsApp Support Button */}
                   <div style={{ marginTop: '0.65rem' }}>
                     <a
                       href={whatsappUrl}
@@ -583,12 +527,56 @@ export default function CheckoutPage() {
                     </a>
                   </div>
                 </div>
+              </div>
 
-                {/* Sender Mobile Number & TID Input */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.65rem' }}>
+              {/* Step 2: Evidence Submission Form */}
+              <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0.85rem', marginBottom: '1rem' }}>
+                <div style={{ fontWeight: 700, color: '#0f172a', fontSize: '0.825rem', marginBottom: '0.65rem' }}>
+                  📝 Step 2: Enter Transaction Evidence
+                </div>
+
+                {/* Receiving Account Select */}
+                <div style={{ marginBottom: '0.65rem' }}>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#334155', marginBottom: '0.2rem' }}>
+                    Selected Receiving Account <span style={{ color: '#dc2626' }}>*</span>
+                  </label>
+                  <select
+                    required
+                    value={selectedAccount}
+                    onChange={(e) => setSelectedAccount(e.target.value)}
+                    className="form-select"
+                    style={{ fontSize: '0.85rem', padding: '0.45rem 0.65rem', width: '100%' }}
+                  >
+                    {allAccounts.map((acc, idx) => {
+                      const val = `${acc.provider} - ${acc.account_number}`;
+                      return (
+                        <option key={acc.id || idx} value={val}>
+                          {acc.provider} ({acc.account_number} - {acc.account_title})
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+
+                {/* Sender Name & Sender Phone */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.65rem', marginBottom: '0.65rem' }}>
                   <div>
                     <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#334155', marginBottom: '0.2rem' }}>
-                      Sender Phone Number <span style={{ color: '#dc2626' }}>*</span>
+                      Sender Account Name / Title <span style={{ color: '#dc2626' }}>*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. Ali Khan"
+                      value={senderName}
+                      onChange={(e) => setSenderName(e.target.value)}
+                      className="form-input"
+                      style={{ fontSize: '0.85rem', padding: '0.45rem 0.65rem' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#334155', marginBottom: '0.2rem' }}>
+                      Sender Phone / Mobile Number <span style={{ color: '#dc2626' }}>*</span>
                     </label>
                     <input
                       type="tel"
@@ -600,29 +588,34 @@ export default function CheckoutPage() {
                       style={{ fontSize: '0.85rem', padding: '0.45rem 0.65rem' }}
                     />
                   </div>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#334155', marginBottom: '0.2rem' }}>
-                      Transaction ID (TID) <span style={{ color: '#64748b', fontWeight: 400 }}>(Optional)</span>
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g. 83921084920 (optional)"
-                      value={tid}
-                      onChange={(e) => setTid(e.target.value)}
-                      className="form-input"
-                      style={{ fontSize: '0.85rem', padding: '0.45rem 0.65rem' }}
-                    />
+                </div>
+
+                {/* Transaction ID (TID) - Optional */}
+                <div style={{ marginBottom: '0.65rem' }}>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#334155', marginBottom: '0.2rem' }}>
+                    Transaction ID (TID) <span style={{ color: '#64748b', fontWeight: 400 }}>(Optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 9876543210 (Optional - from bank/wallet SMS or receipt)"
+                    value={tid}
+                    onChange={(e) => setTid(e.target.value)}
+                    className="form-input"
+                    style={{ fontSize: '0.85rem', padding: '0.45rem 0.65rem' }}
+                  />
+                  <div style={{ fontSize: '0.7rem', color: '#64748b', marginTop: '0.15rem' }}>
+                    You can enter the TID if available to speed up verification.
                   </div>
                 </div>
 
-                {/* Additional Note / Payment Remarks */}
-                <div style={{ marginTop: '0.65rem' }}>
+                {/* Customer Note (Optional) */}
+                <div>
                   <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#334155', marginBottom: '0.2rem' }}>
-                    Note / Payment Details <span style={{ color: '#64748b', fontWeight: 400 }}>(Optional)</span>
+                    Note / Additional Details <span style={{ color: '#64748b', fontWeight: 400 }}>(Optional)</span>
                   </label>
                   <textarea
                     rows={2}
-                    placeholder="e.g. Sent from Ali's JazzCash account, or transaction time / ATM branch details..."
+                    placeholder="e.g. Sent from brother's account, or time of transfer..."
                     value={customerNote}
                     onChange={(e) => setCustomerNote(e.target.value)}
                     className="form-textarea"
@@ -631,11 +624,11 @@ export default function CheckoutPage() {
                 </div>
               </div>
 
-              {/* Security Banner */}
+              {/* Safety notice */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.75rem', color: '#64748b', marginBottom: '1rem' }}>
                 <span>🔒</span>
                 <span>
-                  {paymentSettings?.notice_text || 'Transfers are verified directly against our official bank statement by our administrative team. Never share your mobile wallet PIN or password.'}
+                  {paymentSettings?.notice_text || 'Transfers are verified directly against our official account statement. An administrator will approve your order and unlock your download.'}
                 </span>
               </div>
 

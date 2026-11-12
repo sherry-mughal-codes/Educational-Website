@@ -215,37 +215,8 @@ _configured_backend = os.environ.get('EMAIL_BACKEND', '').strip()
 EMAIL_BACKEND = _configured_backend if _configured_backend else _default_backend
 PASSWORD_RESET_TIMEOUT = 259200  # 3 days in seconds
 
-# Payment Gateway Configuration (Pakistan: JazzCash, Easypaisa, Direct Transfer, Sandbox)
-PAYMENT_GATEWAY_DEFAULT = os.environ.get('PAYMENT_GATEWAY_DEFAULT', 'direct_transfer')
-# Sandbox is disabled by default in production (DEBUG=False)
-_default_sandbox = 'false' if not DEBUG else 'true'
-PAYMENT_SANDBOX_ENABLED = os.environ.get('PAYMENT_SANDBOX_ENABLED', _default_sandbox).strip().lower() in ('1', 'true', 'yes')
-
-# Direct Transfer Platform Credentials (Configurable via environment)
-DIRECT_TRANSFER_ACCOUNT_TITLE = os.environ.get('DIRECT_TRANSFER_ACCOUNT_TITLE', 'FBISE Educational Notes Official')
-DIRECT_TRANSFER_ACCOUNT_NUMBER = os.environ.get('DIRECT_TRANSFER_ACCOUNT_NUMBER', '0300-8889999')
-DIRECT_TRANSFER_BANK_NAME = os.environ.get('DIRECT_TRANSFER_BANK_NAME', 'JazzCash / Easypaisa / Raast')
-DIRECT_TRANSFER_IBAN = os.environ.get('DIRECT_TRANSFER_IBAN', '')
-DIRECT_TRANSFER_INSTRUCTIONS = os.environ.get(
-    'DIRECT_TRANSFER_INSTRUCTIONS',
-    'Transfer the exact fee using your JazzCash, Easypaisa, or Mobile Banking app to our verified platform account and submit your Transaction ID (TID) for fast administrative verification.'
-)
-
-JAZZ_CASH_MERCHANT_ID = os.environ.get('JAZZ_CASH_MERCHANT_ID', '')
-JAZZ_CASH_PASSWORD = os.environ.get('JAZZ_CASH_PASSWORD', '')
-JAZZ_CASH_INTEGRITY_SALT = os.environ.get('JAZZ_CASH_INTEGRITY_SALT', '')
-JAZZ_CASH_RETURN_URL = os.environ.get('JAZZ_CASH_RETURN_URL', f"{FRONTEND_BASE_URL}/checkout/result/")
-JAZZ_CASH_ENDPOINT = os.environ.get(
-    'JAZZ_CASH_ENDPOINT',
-    'https://sandbox.jazzcash.com.pk/CustomerPortal/transactionmanagement/merchantform/'
-)
-
-EASYPAISA_STORE_ID = os.environ.get('EASYPAISA_STORE_ID', '')
-EASYPAISA_HASH_KEY = os.environ.get('EASYPAISA_HASH_KEY', '')
-EASYPAISA_RETURN_URL = os.environ.get('EASYPAISA_RETURN_URL', f"{FRONTEND_BASE_URL}/checkout/result/")
-EASYPAISA_ENDPOINT = os.environ.get(
-    'EASYPAISA_ENDPOINT',
-    'https://easypay.easypaisa.com.pk/easypay/Index.jsf'
-)
+# Manual Payment System Configuration (Direct Bank / Mobile Wallet Transfer)
+PAYMENT_METHOD = 'manual_transfer'
+REQUIRE_EMAIL_VERIFICATION = os.environ.get('REQUIRE_EMAIL_VERIFICATION', 'false').strip().lower() in ('1', 'true', 'yes')
 
 

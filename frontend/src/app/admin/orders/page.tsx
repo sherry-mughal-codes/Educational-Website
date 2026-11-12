@@ -245,11 +245,9 @@ export default function AdminOrdersPage() {
               onChange={(e) => setGatewayFilter(e.target.value)}
               className="form-select"
             >
-              <option value="">All Gateways</option>
-              <option value="direct_transfer">Direct Transfer / TID</option>
-              <option value="jazzcash">JazzCash</option>
-              <option value="easypaisa">Easypaisa</option>
-              <option value="sandbox">Sandbox (Test)</option>
+              <option value="">All Methods</option>
+              <option value="manual_transfer">Manual Bank / Wallet Transfer</option>
+              <option value="direct_transfer">Direct Transfer</option>
             </select>
           </div>
         </div>
@@ -274,7 +272,7 @@ export default function AdminOrdersPage() {
                   <th scope="col">Student</th>
                   <th scope="col">Resource</th>
                   <th scope="col">Amount</th>
-                  <th scope="col">Gateway</th>
+                  <th scope="col">Payment Method</th>
                   <th scope="col">Status</th>
                   <th scope="col">Date</th>
                   <th scope="col" className="text-right">Actions</th>
@@ -290,10 +288,35 @@ export default function AdminOrdersPage() {
                           TID: {o.transaction_id}
                         </div>
                       )}
+                      {o.is_duplicate_tid && (
+                        <span style={{ background: '#fef2f2', color: '#b91c1c', border: '1px solid #f87171', borderRadius: '4px', padding: '0.1rem 0.35rem', fontSize: '0.68rem', fontWeight: 700, display: 'inline-block', marginTop: '0.15rem' }}>
+                          ⚠️ Duplicate TID Reused!
+                        </span>
+                      )}
+                      {o.receiving_account && (
+                        <div style={{ fontSize: '0.72rem', color: '#047857', fontWeight: 600 }}>
+                          To: {o.receiving_account}
+                        </div>
+                      )}
+                      {o.sender_name && (
+                        <div style={{ fontSize: '0.72rem', color: '#334155' }}>
+                          Sender: {o.sender_name}
+                        </div>
+                      )}
                       {o.sender_phone && (
                         <div style={{ fontSize: '0.72rem', color: '#64748b' }}>
                           Phone: {o.sender_phone}
                         </div>
+                      )}
+                      {o.payment_screenshot_url && (
+                        <a
+                          href={o.payment_screenshot_url.startsWith('http') ? o.payment_screenshot_url : `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${o.payment_screenshot_url}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{ display: 'inline-block', marginTop: '0.2rem', fontSize: '0.72rem', color: '#2563eb', textDecoration: 'underline', fontWeight: 600 }}
+                        >
+                          📷 View Receipt Screenshot
+                        </a>
                       )}
                       {o.customer_note && (
                         <div style={{ fontSize: '0.72rem', color: '#065f46', background: '#ecfdf5', padding: '0.2rem 0.45rem', borderRadius: '4px', marginTop: '0.25rem', border: '1px solid #a7f3d0', lineHeight: 1.3 }}>
@@ -425,9 +448,32 @@ export default function AdminOrdersPage() {
             </p>
             <div style={{ background: '#f8fafc', padding: '0.75rem', borderRadius: '6px', border: '1px solid #cbd5e1', marginBottom: '0.85rem', fontSize: '0.825rem' }}>
               <div>Amount to Verify: <strong>PKR {selectedOrderForApprove.amount}</strong></div>
-              <div>Submitted TID: <strong style={{ color: '#1e40af' }}>{selectedOrderForApprove.transaction_id || 'Not provided (Optional)'}</strong></div>
+              <div>Submitted TID: <strong style={{ color: '#1e40af' }}>{selectedOrderForApprove.transaction_id || 'Not provided'}</strong></div>
+              {selectedOrderForApprove.is_duplicate_tid && (
+                <div style={{ color: '#b91c1c', fontWeight: 700, marginTop: '0.25rem', background: '#fef2f2', padding: '0.25rem 0.5rem', borderRadius: '4px', border: '1px solid #f87171' }}>
+                  ⚠️ ALERT: This exact Transaction ID exists on another order! Verify actual bank statement carefully before approving.
+                </div>
+              )}
+              {selectedOrderForApprove.receiving_account && (
+                <div>Platform Receiving Account: <strong style={{ color: '#047857' }}>{selectedOrderForApprove.receiving_account}</strong></div>
+              )}
+              {selectedOrderForApprove.sender_name && (
+                <div>Sender Account Title / Name: <strong>{selectedOrderForApprove.sender_name}</strong></div>
+              )}
               <div>Sender Mobile: <strong>{selectedOrderForApprove.sender_phone || 'None'}</strong></div>
               <div>Study Guide: <strong>{selectedOrderForApprove.resource_title}</strong></div>
+              {selectedOrderForApprove.payment_screenshot_url && (
+                <div style={{ marginTop: '0.4rem' }}>
+                  <a
+                    href={selectedOrderForApprove.payment_screenshot_url.startsWith('http') ? selectedOrderForApprove.payment_screenshot_url : `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${selectedOrderForApprove.payment_screenshot_url}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ color: '#2563eb', textDecoration: 'underline', fontWeight: 700 }}
+                  >
+                    📷 View Uploaded Receipt Screenshot (Opens in New Tab)
+                  </a>
+                </div>
+              )}
               {selectedOrderForApprove.customer_note && (
                 <div style={{ marginTop: '0.4rem', paddingTop: '0.4rem', borderTop: '1px dashed #cbd5e1', color: '#065f46' }}>
                   📝 Customer Note: <strong>&quot;{selectedOrderForApprove.customer_note}&quot;</strong>
@@ -474,7 +520,25 @@ export default function AdminOrdersPage() {
             <div style={{ background: '#fef2f2', padding: '0.65rem', borderRadius: '6px', border: '1px solid #fecaca', marginBottom: '0.85rem', fontSize: '0.8rem' }}>
               <div>TID: <strong>{selectedOrderForReject.transaction_id || 'Not provided'}</strong></div>
               <div>Amount: <strong>PKR {selectedOrderForReject.amount}</strong></div>
+              {selectedOrderForReject.receiving_account && (
+                <div>To Account: <strong>{selectedOrderForReject.receiving_account}</strong></div>
+              )}
+              {selectedOrderForReject.sender_name && (
+                <div>Sender Name: <strong>{selectedOrderForReject.sender_name}</strong></div>
+              )}
               <div>Sender Phone: <strong>{selectedOrderForReject.sender_phone || 'None'}</strong></div>
+              {selectedOrderForReject.payment_screenshot_url && (
+                <div style={{ marginTop: '0.3rem' }}>
+                  <a
+                    href={selectedOrderForReject.payment_screenshot_url.startsWith('http') ? selectedOrderForReject.payment_screenshot_url : `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${selectedOrderForReject.payment_screenshot_url}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ color: '#991b1b', textDecoration: 'underline', fontWeight: 600 }}
+                  >
+                    📷 View Uploaded Receipt Screenshot
+                  </a>
+                </div>
+              )}
               {selectedOrderForReject.customer_note && (
                 <div style={{ marginTop: '0.35rem', paddingTop: '0.35rem', borderTop: '1px dashed #fecaca', color: '#991b1b' }}>
                   📝 Customer Note: <strong>&quot;{selectedOrderForReject.customer_note}&quot;</strong>

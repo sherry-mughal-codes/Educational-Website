@@ -527,6 +527,7 @@ export interface OrderItem {
   status_display: string;
   created_at: string;
   paid_at?: string | null;
+  paid_at_submitted?: string | null;
   student_id?: number;
   student_email?: string;
   student_name?: string;
@@ -534,7 +535,11 @@ export interface OrderItem {
   subject_name?: string;
   gateway_reference?: string;
   transaction_id?: string;
+  sender_name?: string;
   sender_phone?: string;
+  receiving_account?: string;
+  payment_screenshot_url?: string | null;
+  is_duplicate_tid?: boolean;
   customer_note?: string;
   verified_by?: string | null;
   verified_at?: string | null;
@@ -689,13 +694,58 @@ export async function studentGetDashboard(): Promise<StudentDashboardData | null
 }
 
 // ==============================================================================
-// Phase 4: Orders & Checkout API
+// CSRF & Security Utilities
+// ==============================================================================
+export async function getCsrfToken(): Promise<string> {
+  if (typeof document !== 'undefined') {
+    const match = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/);
+    if (match && match[1]) {
+      return decodeURIComponent(match[1]);
+    }
+  }
+  try {
+    const res = await fetch(`${API_BASE}/api/auth/csrf/`, {
+      method: 'GET',
+      credentials: 'include',
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return data.csrfToken || '';
+    }
+  } catch (err) {
+    console.error('Failed to retrieve CSRF token:', err);
+  }
+  return '';
+}
+
+// ==============================================================================
+// Phase 4: Orders & Manual Checkout API
 // ==============================================================================
 export async function getPaymentGateways(): Promise<GatewayItem[]> {
-  const data = await fetchApi<{ gateways: GatewayItem[] }>('/api/gateways/', {
-    cache: 'no-store',
-  });
-  return data?.gateways || [];
+  try {
+    const data = await fetchApi<{ method?: string; accounts?: PaymentAccountItem[]; instructions?: any }>('/api/payments/gateways/', {
+      cache: 'no-store',
+    });
+    return [
+      {
+        id: 'manual_transfer',
+        name: 'Bank & Mobile Wallet Transfer',
+        description: 'Direct transfer to our official bank or mobile wallet accounts with instant verification',
+        is_live: true,
+        badge: 'Recommended',
+      },
+    ];
+  } catch {
+    return [
+      {
+        id: 'manual_transfer',
+        name: 'Bank & Mobile Wallet Transfer',
+        description: 'Direct transfer to official bank or mobile wallet accounts',
+        is_live: true,
+        badge: 'Active',
+      },
+    ];
+  }
 }
 
 export async function createOrder(payload: {
@@ -707,22 +757,46 @@ export async function createOrder(payload: {
 }): Promise<{
   success: boolean;
   already_owned?: boolean;
+  message?: string;
+  download_url?: string;
+  dashboard_url?: string;
   order_reference?: string;
   amount?: string;
   currency?: string;
+  status?: string;
+  resource?: {
+    id: number;
+    title: string;
+    slug: string;
+    class_name: string;
+    subject_name: string;
+  };
   payment?: {
-    gateway: string;
-    gateway_name: string;
-    action_type: string;
-    action_url: string;
-    form_data?: Record<string, string>;
+    method: string;
+    order_reference: string;
+    amount: string;
+    currency: string;
+    accounts: PaymentAccountItem[];
+    instructions: {
+      whatsapp_number?: string;
+      instructions_steps?: string[];
+      notice_text?: string;
+    };
+    action_type?: string;
+    action_url?: string;
   };
   error?: string;
+  requires_email_verification?: boolean;
+  email?: string;
 }> {
   try {
+    const csrfToken = await getCsrfToken();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (csrfToken) headers['X-CSRFToken'] = csrfToken;
+
     const res = await fetch(`${API_BASE}/api/orders/create/`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(payload),
       credentials: 'include',
     });
@@ -733,7 +807,12 @@ export async function createOrder(payload: {
       return { success: false, error: `Server error (${res.status}). Please try again.` };
     }
     if (!res.ok) {
-      return { success: false, error: data.error || 'Failed to create order' };
+      return {
+        success: false,
+        error: data.error || 'Failed to create order',
+        requires_email_verification: data.requires_email_verification,
+        email: data.email,
+      };
     }
     return data;
   } catch (err: any) {
@@ -744,11 +823,18 @@ export async function createOrder(payload: {
 export async function getOrderStatus(orderReference: string): Promise<{
   order_reference: string;
   status: string;
+  status_display?: string;
   is_paid: boolean;
   amount: string;
   currency: string;
   payment_gateway: string;
-  gateway_reference?: string;
+  receiving_account?: string;
+  transaction_id?: string;
+  sender_name?: string;
+  sender_phone?: string;
+  customer_note?: string;
+  payment_screenshot_url?: string | null;
+  rejection_reason?: string;
   created_at: string;
   paid_at?: string | null;
   resource?: {
@@ -765,27 +851,43 @@ export async function getOrderStatus(orderReference: string): Promise<{
   });
 }
 
-export async function submitPaymentCallback(gateway: string, payload: Record<string, any>): Promise<{
+export async function submitManualPayment(
+  orderReference: string,
+  payload: FormData | Record<string, any>
+): Promise<{
   success: boolean;
-  order_reference?: string;
   status?: string;
+  order_reference?: string;
+  is_duplicate_tid?: boolean;
   error?: string;
 }> {
   try {
-    const res = await fetch(`${API_BASE}/api/payments/callback/${encodeURIComponent(gateway)}/`, {
+    const csrfToken = await getCsrfToken();
+    const headers: Record<string, string> = {};
+    if (csrfToken) headers['X-CSRFToken'] = csrfToken;
+
+    let body: any;
+    if (payload instanceof FormData) {
+      body = payload;
+    } else {
+      headers['Content-Type'] = 'application/json';
+      body = JSON.stringify(payload);
+    }
+
+    const res = await fetch(`${API_BASE}/api/orders/${encodeURIComponent(orderReference)}/submit-payment/`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      headers,
+      body,
       credentials: 'include',
     });
     let data: any = {};
     try {
       data = await res.json();
     } catch {
-      return { success: false, error: `Payment gateway error (${res.status}). Please try again.` };
+      return { success: false, error: `Server error (${res.status}). Please try again.` };
     }
     if (!res.ok) {
-      return { success: false, error: data.error || 'Payment processing failed' };
+      return { success: false, error: data.error || 'Failed to submit payment details' };
     }
     return data;
   } catch (err: any) {
@@ -793,18 +895,13 @@ export async function submitPaymentCallback(gateway: string, payload: Record<str
   }
 }
 
-export async function sandboxSimulatePay(orderReference: string): Promise<{ success: boolean; status?: string; error?: string }> {
-  const res = await fetch(`${API_BASE}/api/payments/sandbox-pay/`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ order_reference: orderReference }),
-    credentials: 'include',
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    return { success: false, error: data.error || 'Sandbox payment simulation failed' };
-  }
-  return data;
+export async function submitPaymentCallback(gateway: string, payload: Record<string, any>): Promise<{
+  success: boolean;
+  order_reference?: string;
+  status?: string;
+  error?: string;
+}> {
+  return submitManualPayment(payload.order_reference || '', payload);
 }
 
 // ==============================================================================
@@ -834,9 +931,13 @@ export async function adminGetOrders(filters: {
 
 export async function adminApproveOrder(orderId: number | string): Promise<{ success: boolean; message?: string; error?: string }> {
   try {
+    const csrfToken = await getCsrfToken();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (csrfToken) headers['X-CSRFToken'] = csrfToken;
+
     const res = await fetch(`${API_BASE}/api/admin/orders/${orderId}/approve/`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       credentials: 'include',
     });
     const data = await res.json();
@@ -851,9 +952,13 @@ export async function adminApproveOrder(orderId: number | string): Promise<{ suc
 
 export async function adminRejectOrder(orderId: number | string, reason: string): Promise<{ success: boolean; message?: string; error?: string }> {
   try {
+    const csrfToken = await getCsrfToken();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (csrfToken) headers['X-CSRFToken'] = csrfToken;
+
     const res = await fetch(`${API_BASE}/api/admin/orders/${orderId}/reject/`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ reason }),
       credentials: 'include',
     });
@@ -868,17 +973,25 @@ export async function adminRejectOrder(orderId: number | string, reason: string)
 }
 
 export async function adminRefundOrder(orderId: number | string, reason: string): Promise<{ success: boolean; message?: string; error?: string }> {
-  const res = await fetch(`${API_BASE}/api/admin/orders/${orderId}/refund/`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ reason }),
-    credentials: 'include',
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    return { success: false, error: data.error || 'Failed to refund order' };
+  try {
+    const csrfToken = await getCsrfToken();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (csrfToken) headers['X-CSRFToken'] = csrfToken;
+
+    const res = await fetch(`${API_BASE}/api/admin/orders/${orderId}/refund/`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ reason }),
+      credentials: 'include',
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      return { success: false, error: data.error || 'Failed to refund order' };
+    }
+    return { success: true, message: data.message };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Network error refunding order' };
   }
-  return { success: true, message: data.message };
 }
 
 // ==============================================================================

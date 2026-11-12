@@ -37,25 +37,24 @@ Write-Host " FBISE Educational Website - Disaster Recovery & Restore" -Foregroun
 Write-Host " Target Backup: $BackupPath"
 Write-Host "======================================================================"
 
-# 1. Verify Checksums
+# 1. Verify Checksums strictly
 Write-Host "[1/4] Verifying cryptographic SHA256 checksums..." -ForegroundColor Yellow
 $DbDumpPath = Join-Path $BackupPath "db_backup.sql"
 $MediaArchivePath = Join-Path $BackupPath "media_backup.tar.gz"
 $ChecksumPath = Join-Path $BackupPath "checksums.sha256"
 
-if (Test-Path $ChecksumPath) {
-    $DbHashCalculated = (Get-FileHash -Path $DbDumpPath -Algorithm SHA256).Hash.ToLower()
-    $MediaHashCalculated = (Get-FileHash -Path $MediaArchivePath -Algorithm SHA256).Hash.ToLower()
-    $ChecksumContent = Get-Content -Path $ChecksumPath -Raw
-
-    if ($ChecksumContent.Contains($DbHashCalculated) -and $ChecksumContent.Contains($MediaHashCalculated)) {
-        Write-Host "  SHA256 checksums verified successfully." -ForegroundColor Green
-    } else {
-        Write-Warning "Checksum mismatch detected! One or more backup files may have been altered."
-    }
-} else {
-    Write-Warning "checksums.sha256 not found. Skipping hash comparison."
+if (-not (Test-Path $ChecksumPath)) {
+    Write-Error "ERROR: checksums.sha256 was not found in $BackupPath! Restoration aborted to prevent database corruption."
 }
+
+$DbHashCalculated = (Get-FileHash -Path $DbDumpPath -Algorithm SHA256).Hash.ToLower()
+$MediaHashCalculated = (Get-FileHash -Path $MediaArchivePath -Algorithm SHA256).Hash.ToLower()
+$ChecksumContent = (Get-Content -Path $ChecksumPath -Raw).ToLower()
+
+if (-not ($ChecksumContent.Contains($DbHashCalculated) -and $ChecksumContent.Contains($MediaHashCalculated))) {
+    Write-Error "CRITICAL: Checksum verification failed! One or more backup files have been altered or corrupted. Restoration aborted."
+}
+Write-Host "  ✓ SHA256 checksums verified successfully." -ForegroundColor Green
 
 $DbUser = if ($env:POSTGRES_USER) { $env:POSTGRES_USER } else { "fbise_user" }
 $DbName = if ($env:POSTGRES_DB) { $env:POSTGRES_DB } else { "fbise_db" }

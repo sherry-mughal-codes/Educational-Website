@@ -43,8 +43,15 @@ from .email_utils import (
     send_payment_rejected_notification,
 )
 from .rate_limiting import get_client_ip, check_rate_limit, record_failed_attempt, reset_rate_limit
-from .payments.registry import get_payment_gateway, list_available_gateways
-from .payments.sandbox import SandboxPaymentGateway
+from django.contrib.auth.password_validation import validate_password
+from django.views.decorators.csrf import ensure_csrf_cookie
+import django.middleware.csrf
+from .manual_payment import (
+    get_active_payment_accounts,
+    get_payment_instructions,
+    submit_manual_payment,
+    validate_screenshot_file,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -661,6 +668,12 @@ def student_register(request):
     if password != password_confirm:
         return JsonResponse({"error": "Passwords do not match."}, status=400)
 
+    try:
+        user_dummy = User(username=email, email=email, first_name=full_name)
+        validate_password(password, user=user_dummy)
+    except ValidationError as err:
+        return JsonResponse({"error": "; ".join(err.messages)}, status=400)
+
     if User.objects.filter(email__iexact=email).exists() or User.objects.filter(username__iexact=email).exists():
         return JsonResponse({"error": "An account with this email address is already registered. Please sign in."}, status=400)
 
@@ -969,6 +982,11 @@ def student_password_reset_confirm(request):
     if not default_token_generator.check_token(user, token):
         return JsonResponse({"error": "Password reset token is invalid or has expired."}, status=400)
 
+    try:
+        validate_password(new_password, user=user)
+    except ValidationError as err:
+        return JsonResponse({"error": "; ".join(err.messages)}, status=400)
+
     user.set_password(new_password)
     user.save()
 
@@ -1069,11 +1087,18 @@ def student_dashboard(request):
 
 
 # ==============================================================================
-# Orders, Checkout & Payment Gateways
+# Orders, Checkout & Manual Payment System
 # ==============================================================================
 def payment_gateways_list(request):
-    """Returns available payment gateway options for checkout."""
-    return JsonResponse({"gateways": list_available_gateways()}, status=200)
+    """
+    Returns available manual payment receiving accounts and instructions.
+    Automated gateway integrations are retired in favor of manual bank/wallet transfer.
+    """
+    return JsonResponse({
+        "method": "manual_transfer",
+        "accounts": get_active_payment_accounts(),
+        "instructions": get_payment_instructions(),
+    }, status=200)
 
 
 @csrf_exempt
@@ -1081,12 +1106,23 @@ def order_create(request):
     """
     Creates an order for an authenticated student purchasing a paid resource.
     Locks price directly from backend database - never trusts price from browser.
+    Initializes order in 'pending_payment' status and returns official receiving accounts.
     """
     if request.method != 'POST':
         return JsonResponse({"error": "Method not allowed"}, status=405)
 
     if not request.user.is_authenticated:
         return JsonResponse({"error": "Authentication required. Please sign in to purchase."}, status=401)
+
+    # Enforce email verification policy before order creation (Phase 4.3)
+    profile = getattr(request.user, 'student_profile', None)
+    if profile and not profile.is_email_verified and not (request.user.is_staff or request.user.is_superuser):
+        if getattr(settings, 'REQUIRE_EMAIL_VERIFICATION', True):
+            return JsonResponse({
+                "error": "Email verification is required before purchasing study guides. Please verify your email to continue.",
+                "requires_email_verification": True,
+                "email": request.user.email
+            }, status=403)
 
     try:
         data = json.loads(request.body)
@@ -1095,7 +1131,6 @@ def order_create(request):
 
     resource_id = data.get('resource_id')
     resource_slug = data.get('resource_slug')
-    gateway_id = str(data.get('gateway_id') or data.get('payment_gateway') or 'direct_transfer').lower().strip()
 
     if resource_id:
         resource = get_object_or_404(Resource, id=resource_id, is_published=True)
@@ -1128,20 +1163,20 @@ def order_create(request):
         resource=resource,
         amount=locked_amount,
         currency=currency,
-        payment_gateway=gateway_id,
-        status='pending',
+        payment_gateway='manual_transfer',
+        status='pending_payment',
         customer_note=customer_note,
     )
 
-    gateway = get_payment_gateway(gateway_id)
-    return_url = data.get('return_url')
-    init_data = gateway.initiate_payment(order, return_url=return_url)
+    active_accounts = get_active_payment_accounts()
+    instructions = get_payment_instructions()
 
     return JsonResponse({
         "success": True,
         "order_reference": order.order_reference,
         "amount": str(order.amount),
         "currency": order.currency,
+        "status": order.status,
         "resource": {
             "id": resource.id,
             "title": resource.title,
@@ -1149,18 +1184,28 @@ def order_create(request):
             "class_name": resource.class_subject.class_level.name,
             "subject_name": resource.class_subject.subject.name,
         },
-        "payment": init_data,
+        "payment": {
+            "method": "manual_transfer",
+            "order_reference": order.order_reference,
+            "amount": str(order.amount),
+            "currency": order.currency,
+            "accounts": active_accounts,
+            "instructions": instructions,
+        }
     }, status=201)
 
 
 def order_status(request, order_reference):
     """
     Returns current verified status for an order.
-    Protected: Accessible only by the student who created the order or staff.
+    Protected: Accessible only by the student who created the order or authorized staff.
     """
     order = get_object_or_404(Order, order_reference=order_reference)
 
-    if request.user.is_authenticated and not (request.user == order.student or request.user.is_staff):
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "Authentication required to view order status."}, status=401)
+
+    if not (request.user == order.student or request.user.is_staff or request.user.is_superuser):
         return JsonResponse({"error": "Unauthorized access to order."}, status=403)
 
     cls = order.resource.class_subject.class_level
@@ -1169,11 +1214,18 @@ def order_status(request, order_reference):
     return JsonResponse({
         "order_reference": order.order_reference,
         "status": order.status,
+        "status_display": order.get_status_display(),
         "is_paid": order.status == 'paid',
         "amount": str(order.amount),
         "currency": order.currency,
         "payment_gateway": order.payment_gateway,
-        "gateway_reference": order.gateway_reference,
+        "receiving_account": order.receiving_account,
+        "transaction_id": order.transaction_id,
+        "sender_name": order.sender_name,
+        "sender_phone": order.sender_phone,
+        "customer_note": order.customer_note,
+        "payment_screenshot_url": order.payment_screenshot.url if order.payment_screenshot else None,
+        "rejection_reason": order.rejection_reason,
         "created_at": order.created_at.isoformat(),
         "paid_at": order.paid_at.isoformat() if order.paid_at else None,
         "resource": {
@@ -1187,26 +1239,55 @@ def order_status(request, order_reference):
 
 
 @csrf_exempt
-def payment_callback(request, gateway_name):
+def order_submit_manual_payment(request, order_reference):
     """
-    Callback & return handler for payment gateways (JazzCash, Easypaisa, Sandbox).
-    Idempotent: Duplicate notifications will not produce duplicate purchase records.
+    Submits manual payment verification details (TID, sender name, mobile, receiving account, screenshot).
+    Atomically transitions order from 'pending_payment' to 'pending_verification'.
     """
+    if request.method != 'POST':
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "Authentication required. Please sign in to submit payment details."}, status=401)
+
+    order = get_object_or_404(Order, order_reference=order_reference)
+
     data = {}
-    if request.method == 'POST':
+    if request.content_type and 'application/json' in request.content_type:
         try:
             data = json.loads(request.body)
         except Exception:
+            return JsonResponse({"error": "Invalid JSON payload."}, status=400)
+    else:
+        data = request.POST.dict()
+
+    screenshot_file = request.FILES.get('payment_screenshot') or request.FILES.get('screenshot')
+
+    result = submit_manual_payment(order, request.user, data, screenshot_file=screenshot_file)
+    return JsonResponse(result, status=result.get('status_code', 200))
+
+
+@csrf_exempt
+def payment_callback(request, gateway_name):
+    """
+    Backwards compatibility endpoint routing legacy callback requests into the manual payment submission handler.
+    """
+    data = {}
+    if request.method == 'POST':
+        if request.content_type and 'application/json' in request.content_type:
+            try:
+                data = json.loads(request.body)
+            except Exception:
+                data = {}
+        else:
             data = request.POST.dict()
     elif request.method == 'GET':
         data = request.GET.dict()
 
     order_ref = (
-        data.get('pp_BillReference') or
         data.get('order_reference') or
+        data.get('pp_BillReference') or
         data.get('order_ref') or
-        data.get('orderRefNumber') or
-        data.get('orderRefNum') or
         ''
     )
 
@@ -1218,168 +1299,26 @@ def payment_callback(request, gateway_name):
     except Order.DoesNotExist:
         return JsonResponse({"error": f"Order {order_ref} not found."}, status=404)
 
-    gateway = get_payment_gateway(gateway_name or order.payment_gateway)
-    verification = gateway.verify_payment(data, order=order)
+    screenshot_file = request.FILES.get('payment_screenshot') if request.FILES else None
+    student_user = request.user if request.user.is_authenticated else order.student
 
-    with transaction.atomic():
-        order = Order.objects.select_for_update().get(id=order.id)
+    result = submit_manual_payment(order, student_user, data, screenshot_file=screenshot_file)
 
-        # Do not allow callbacks to resurrect or alter already refunded or cancelled orders
-        if order.status in ('refunded', 'cancelled'):
-            return JsonResponse({
-                "success": False,
-                "message": f"Order {order.order_reference} is in final state '{order.status}' and cannot be modified.",
-                "status": order.status
-            }, status=400)
+    if request.method == 'GET' or 'text/html' in request.META.get('HTTP_ACCEPT', ''):
+        frontend_url = getattr(settings, 'FRONTEND_BASE_URL', 'http://localhost:3001')
+        status_param = "pending_verification" if result.get('success') else "failed"
+        return HttpResponseRedirect(f"{frontend_url}/checkout/result/?order_ref={order.order_reference}&status={status_param}")
 
-        if verification.is_valid and verification.is_paid:
-            if order.status != 'paid':
-                order.status = 'paid'
-                order.paid_at = timezone.now()
-                order.gateway_reference = verification.gateway_reference or order.gateway_reference
-                order.gateway_response_data = data
-                order.save()
-
-                purchase, created = Purchase.objects.get_or_create(
-                    student=order.student,
-                    resource=order.resource,
-                    defaults={'order': order, 'is_active': True}
-                )
-                if not created and not purchase.is_active:
-                    purchase.is_active = True
-                    purchase.order = order
-                    purchase.revoked_at = None
-                    purchase.revocation_reason = ''
-                    purchase.save()
-
-                send_purchase_confirmation(order)
-
-            if request.method == 'GET' or 'text/html' in request.META.get('HTTP_ACCEPT', ''):
-                frontend_url = getattr(settings, 'FRONTEND_BASE_URL', 'http://localhost:3001')
-                return HttpResponseRedirect(f"{frontend_url}/checkout/result/?order_ref={order.order_reference}&status=success")
-
-            return JsonResponse({"success": True, "status": "paid", "order_reference": order.order_reference})
-
-        elif verification.is_valid and not verification.is_paid:
-            # Direct Transfer or queued verification: requires manual admin approval
-            if order.status not in ('paid', 'refunded', 'cancelled'):
-                order.status = 'pending_verification'
-                order.gateway_reference = verification.gateway_reference or order.gateway_reference
-                order.gateway_response_data = data
-                tid = str(data.get('transaction_id') or data.get('tid') or '').strip().upper()
-                sender = str(data.get('sender_phone') or data.get('mobile_number') or '').strip()
-                customer_note = str(data.get('customer_note') or data.get('note') or data.get('notes') or '').strip()
-                if tid:
-                    order.transaction_id = tid
-                if sender:
-                    order.sender_phone = sender
-                if customer_note:
-                    order.customer_note = customer_note
-                order.save()
-
-                send_payment_received_pending_verification(order)
-
-            if request.method == 'GET' or 'text/html' in request.META.get('HTTP_ACCEPT', ''):
-                frontend_url = getattr(settings, 'FRONTEND_BASE_URL', 'http://localhost:3001')
-                return HttpResponseRedirect(f"{frontend_url}/checkout/result/?order_ref={order.order_reference}&status=pending_verification")
-
-            return JsonResponse({
-                "success": True,
-                "status": "pending_verification",
-                "order_reference": order.order_reference,
-                "message": "Payment submitted. An administrator will verify the transfer within 15-30 minutes."
-            }, status=200)
-
-        else:
-            if order.status not in ('refunded', 'cancelled', 'paid'):
-                order.status = 'failed'
-                order.gateway_response_data = data
-                order.save()
-                send_payment_failed_alert(order, verification.error_message)
-
-            if request.method == 'GET' or 'text/html' in request.META.get('HTTP_ACCEPT', ''):
-                frontend_url = getattr(settings, 'FRONTEND_BASE_URL', 'http://localhost:3001')
-                return HttpResponseRedirect(f"{frontend_url}/checkout/result/?order_ref={order.order_reference}&status=failed")
-
-            return JsonResponse({
-                "success": False,
-                "status": "failed",
-                "error": verification.error_message,
-                "order_reference": order.order_reference
-            }, status=400)
+    return JsonResponse(result, status=result.get('status_code', 200))
 
 
-@csrf_exempt
-def sandbox_simulate_payment(request):
+@ensure_csrf_cookie
+def get_csrf_token(request):
     """
-    Developer & verification endpoint simulating instant payment confirmation.
-    CRITICAL SECURITY RULES:
-    1. Strictly disabled if PAYMENT_SANDBOX_ENABLED is False or in production.
-    2. Accessible ONLY by authenticated staff/superusers or the automated backend test runner.
-       Never accessible to ordinary students or anonymous visitors.
+    Provides a valid CSRF token and sets the csrftoken cookie for cross-origin frontend communication.
     """
-    if not getattr(settings, 'PAYMENT_SANDBOX_ENABLED', False):
-        return JsonResponse({"error": "Sandbox payment simulation is disabled on this server."}, status=403)
-
-    import sys
-    is_staff = request.user.is_authenticated and (request.user.is_staff or request.user.is_superuser)
-    is_test_suite = ('test' in sys.argv) or (request.META.get('HTTP_X_TEST_SUITE') == '1')
-
-    if not (is_staff or is_test_suite):
-        return JsonResponse({"error": "Access denied. Sandbox simulation requires administrator privileges."}, status=403)
-
-    try:
-        data = json.loads(request.body)
-    except Exception:
-        data = request.POST
-
-    order_ref = data.get('order_reference')
-    if not order_ref:
-        return JsonResponse({"error": "Order reference is required."}, status=400)
-
-    try:
-        order = Order.objects.get(order_reference=order_ref)
-    except Order.DoesNotExist:
-        return JsonResponse({"error": "Order not found."}, status=404)
-
-    if order.payment_gateway != 'sandbox':
-        return JsonResponse({"error": "This order was not created using the sandbox gateway."}, status=400)
-
-    gateway = SandboxPaymentGateway()
-    verification = gateway.verify_payment(data, order=order)
-
-    if verification.is_valid and verification.is_paid:
-        with transaction.atomic():
-            order = Order.objects.select_for_update().get(id=order.id)
-            if order.status not in ('refunded', 'cancelled') and order.status != 'paid':
-                order.status = 'paid'
-                order.paid_at = timezone.now()
-                order.gateway_reference = verification.gateway_reference
-                order.gateway_response_data = {"mode": "sandbox", "simulated": True}
-                order.save()
-
-                purchase, created = Purchase.objects.get_or_create(
-                    student=order.student,
-                    resource=order.resource,
-                    defaults={'order': order, 'is_active': True}
-                )
-                if not created and not purchase.is_active:
-                    purchase.is_active = True
-                    purchase.order = order
-                    purchase.revoked_at = None
-                    purchase.revocation_reason = ''
-                    purchase.save()
-
-                send_purchase_confirmation(order)
-
-        return JsonResponse({
-            "success": True,
-            "status": "paid",
-            "order_reference": order.order_reference,
-            "message": "Payment verified and purchase access granted (Sandbox mode)."
-        }, status=200)
-
-    return JsonResponse({"success": False, "error": verification.error_message}, status=400)
+    token = django.middleware.csrf.get_token(request)
+    return JsonResponse({"csrfToken": token}, status=200)
 
 
 # ==============================================================================
@@ -2095,7 +2034,6 @@ def admin_bulk_update_structure(request):
 # ==============================================================================
 # Admin Orders & Sales Management Endpoints
 # ==============================================================================
-@csrf_exempt
 @admin_required
 def admin_orders_list(request):
     """
@@ -2122,7 +2060,9 @@ def admin_orders_list(request):
             Q(resource__title__icontains=query) |
             Q(gateway_reference__icontains=query) |
             Q(transaction_id__icontains=query) |
-            Q(sender_phone__icontains=query)
+            Q(sender_name__icontains=query) |
+            Q(sender_phone__icontains=query) |
+            Q(receiving_account__icontains=query)
         )
 
     if status_filter:
@@ -2135,6 +2075,14 @@ def admin_orders_list(request):
     paid_orders = qs.filter(status='paid')
     pending_verification_count = qs.filter(status='pending_verification').count()
     total_revenue = sum(o.amount for o in paid_orders)
+
+    # Detect duplicate TIDs to flag suspicious duplicate usage
+    duplicate_tids = set(
+        Order.objects.values('transaction_id')
+        .annotate(c=Count('id'))
+        .filter(c__gt=1, transaction_id__gt='')
+        .values_list('transaction_id', flat=True)
+    )
 
     orders_data = [
         {
@@ -2150,9 +2098,14 @@ def admin_orders_list(request):
             "amount": str(o.amount),
             "currency": o.currency,
             "payment_gateway": o.payment_gateway,
+            "receiving_account": o.receiving_account,
             "gateway_reference": o.gateway_reference,
             "transaction_id": o.transaction_id,
+            "sender_name": o.sender_name,
             "sender_phone": o.sender_phone,
+            "payment_screenshot_url": o.payment_screenshot.url if o.payment_screenshot else None,
+            "paid_at_submitted": o.paid_at_submitted.isoformat() if o.paid_at_submitted else None,
+            "is_duplicate_tid": bool(o.transaction_id and o.transaction_id in duplicate_tids),
             "customer_note": o.customer_note,
             "status": o.status,
             "status_display": o.get_status_display(),
@@ -2177,7 +2130,6 @@ def admin_orders_list(request):
     }, status=200)
 
 
-@csrf_exempt
 @admin_required
 def admin_order_detail(request, order_id):
     """
@@ -2194,6 +2146,10 @@ def admin_order_detail(request, order_id):
         id=order_id
     )
     purchase = getattr(order, 'purchase', None)
+    is_duplicate_tid = bool(
+        order.transaction_id and
+        Order.objects.filter(transaction_id=order.transaction_id).exclude(id=order.id).exists()
+    )
 
     return JsonResponse({
         "id": order.id,
@@ -2214,9 +2170,14 @@ def admin_order_detail(request, order_id):
         "amount": str(order.amount),
         "currency": order.currency,
         "payment_gateway": order.payment_gateway,
+        "receiving_account": order.receiving_account,
         "gateway_reference": order.gateway_reference,
         "transaction_id": order.transaction_id,
+        "sender_name": order.sender_name,
         "sender_phone": order.sender_phone,
+        "payment_screenshot_url": order.payment_screenshot.url if order.payment_screenshot else None,
+        "paid_at_submitted": order.paid_at_submitted.isoformat() if order.paid_at_submitted else None,
+        "is_duplicate_tid": is_duplicate_tid,
         "customer_note": order.customer_note,
         "status": order.status,
         "status_display": order.get_status_display(),
@@ -2246,7 +2207,6 @@ def admin_order_detail(request, order_id):
     }, status=200)
 
 
-@csrf_exempt
 @admin_required
 def admin_order_approve_payment(request, order_id):
     """
@@ -2308,7 +2268,6 @@ def admin_order_approve_payment(request, order_id):
     }, status=200)
 
 
-@csrf_exempt
 @admin_required
 def admin_order_reject_payment(request, order_id):
     """
@@ -2359,7 +2318,6 @@ def admin_order_reject_payment(request, order_id):
     }, status=200)
 
 
-@csrf_exempt
 @admin_required
 def admin_order_refund(request, order_id):
     """
@@ -2759,9 +2717,9 @@ def practice_question_submit(request, question_id):
         client_secret = data.get('guest_secret') or request.headers.get('X-Guest-Secret')
         client_guest_id = data.get('guest_identifier')
         if client_secret and session.guest_secret and client_secret != session.guest_secret:
-            return JsonResponse({"error": "Unauthorized access to guest practice session."}, status=403)
+            return JsonResponse({"error": "Unauthorized access to guest practice session. Invalid guest secret."}, status=403)
         if client_guest_id and session.guest_identifier and client_guest_id != session.guest_identifier:
-            return JsonResponse({"error": "Unauthorized access to guest practice session."}, status=403)
+            return JsonResponse({"error": "Unauthorized access to guest practice session. Invalid guest identifier."}, status=403)
 
     # Anti-Tampering: Reject answers on completed sessions
     if session.is_completed:
@@ -2890,13 +2848,13 @@ def practice_session_finish(request, session_uuid):
         try:
             data = json.loads(request.body)
         except Exception:
-            data = request.POST
+            data = request.POST or {}
         client_secret = data.get('guest_secret') or request.headers.get('X-Guest-Secret')
         client_guest_id = data.get('guest_identifier')
         if client_secret and session.guest_secret and client_secret != session.guest_secret:
-            return JsonResponse({"error": "Unauthorized access to guest practice session."}, status=403)
+            return JsonResponse({"error": "Unauthorized access to guest practice session. Invalid guest secret."}, status=403)
         if client_guest_id and session.guest_identifier and client_guest_id != session.guest_identifier:
-            return JsonResponse({"error": "Unauthorized access to guest practice session."}, status=403)
+            return JsonResponse({"error": "Unauthorized access to guest practice session. Invalid guest identifier."}, status=403)
 
     total_attempts = session.attempts.count()
     correct_count = session.attempts.filter(is_correct=True).count()

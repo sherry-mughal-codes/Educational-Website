@@ -38,19 +38,23 @@ echo " FBISE Educational Website - Disaster Recovery & Restore"
 echo " Target Backup: ${BACKUP_TARGET}"
 echo "======================================================================"
 
-# 1. Verify Checksums
+# 1. Verify Checksums strictly
 echo "[1/4] Verifying SHA256 checksums..."
 cd "${BACKUP_TARGET}"
-if [ -f "checksums.sha256" ]; then
-    if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum -c checksums.sha256
-    elif command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 -c checksums.sha256
-    fi
-    echo "  ✓ Checksums match perfectly."
-else
-    echo "  ⚠️ Warning: checksums.sha256 not found. Proceeding with caution."
+if [ ! -f "checksums.sha256" ]; then
+    echo "ERROR: checksums.sha256 not found in backup directory! Aborting restore for database safety." >&2
+    exit 1
 fi
+
+if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum -c checksums.sha256
+elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 -c checksums.sha256
+else
+    echo "ERROR: Neither sha256sum nor shasum found on host. Cannot verify backup integrity." >&2
+    exit 1
+fi
+echo "  ✓ Cryptographic SHA256 verification passed."
 cd "${ROOT_DIR}"
 
 DB_USER="${POSTGRES_USER:-fbise_user}"

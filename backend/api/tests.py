@@ -14,9 +14,7 @@ from .models import (
     PracticeSession, PracticeAttempt
 )
 from .pdf_utils import validate_pdf_file
-from .payments.jazzcash import JazzCashGateway
-from .payments.easypaisa import EasypaisaGateway
-from .payments.sandbox import SandboxPaymentGateway
+from .manual_payment import submit_manual_payment, get_active_payment_accounts
 
 class EducationalApiTests(TestCase):
     def setUp(self):
@@ -367,8 +365,9 @@ class AdminPhase3Tests(TestCase):
         self.resource.is_published = True
         self.resource.save()
 
-        # Stream published PDF (students can view online)
-        stream_url = f"/api/resources/class-10/chemistry/{self.resource.slug}/pdf-stream/"
+        # Stream published PDF (students can view online via authorized stream URL with token)
+        detail_resp = self.client.get(f"/api/resources/class-10/chemistry/{self.resource.slug}/")
+        stream_url = detail_resp.json()['pdf_stream_url']
         response = self.client.get(stream_url)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response['Content-Type'], 'application/pdf')
@@ -561,14 +560,13 @@ class OrderAndPricingSecurityTests(TestCase):
             email='order_student@example.com',
             password='StudentPass2026!'
         )
-        StudentProfile.objects.create(user=self.student_user)
+        StudentProfile.objects.create(user=self.student_user, is_email_verified=True)
         self.client.force_login(self.student_user)
 
     def test_order_creation_locks_price_from_database(self):
         # Client attempts to pass fraudulent amount
         resp = self.client.post('/api/orders/create/', {
             'resource_id': self.resource.id,
-            'payment_gateway': 'sandbox',
             'amount': '1.00'  # Tampered client amount
         }, content_type='application/json')
         self.assertEqual(resp.status_code, 201)
@@ -579,19 +577,21 @@ class OrderAndPricingSecurityTests(TestCase):
         # The amount must be the authoritative database price (PKR 100.00), not the 1.00 client payload
         self.assertEqual(order.amount, Decimal('100.00'))
         self.assertEqual(order.currency, 'PKR')
-        self.assertEqual(order.status, 'pending')
+        self.assertEqual(order.status, 'pending_payment')
+        self.assertEqual(order.payment_gateway, 'manual_transfer')
+        self.assertIn('payment', data)
+        self.assertEqual(data['payment']['method'], 'manual_transfer')
 
     def test_payment_gateways_list_endpoint(self):
         resp = self.client.get('/api/payments/gateways/')
         self.assertEqual(resp.status_code, 200)
-        gateways = resp.json()['gateways']
-        gateway_ids = [g['id'] for g in gateways]
-        self.assertIn('jazzcash', gateway_ids)
-        self.assertIn('easypaisa', gateway_ids)
-        self.assertIn('sandbox', gateway_ids)
+        data = resp.json()
+        self.assertEqual(data['method'], 'manual_transfer')
+        self.assertIn('accounts', data)
+        self.assertIn('instructions', data)
 
 
-class SandboxPaymentAndPurchaseGrantTests(TestCase):
+class ManualPaymentWorkflowTests(TestCase):
     def setUp(self):
         self.client = Client()
         self.class_10 = ClassLevel.objects.create(name="Class 10", grade_number=10, slug="class-10")
@@ -610,57 +610,145 @@ class SandboxPaymentAndPurchaseGrantTests(TestCase):
             email='chem_student@example.com',
             password='StudentPass2026!'
         )
-        StudentProfile.objects.create(user=self.student)
+        StudentProfile.objects.create(user=self.student, is_email_verified=True)
         self.client.force_login(self.student)
 
-    def test_sandbox_simulate_payment_grants_purchase(self):
+        self.staff = User.objects.create_user(
+            username='admin_verifier@fbise.edu.pk',
+            email='admin_verifier@fbise.edu.pk',
+            password='AdminPass2026!',
+            is_staff=True
+        )
+
+    def test_full_manual_payment_and_admin_approval_workflow(self):
         # 1. Create order
         create_resp = self.client.post('/api/orders/create/', {
             'resource_id': self.resource.id,
-            'payment_gateway': 'sandbox'
         }, content_type='application/json')
+        self.assertEqual(create_resp.status_code, 201)
         order_ref = create_resp.json()['order_reference']
 
-        # 2. Simulate sandbox payment
-        pay_resp = self.client.post('/api/payments/sandbox-pay/', {
-            'order_reference': order_ref
-        }, content_type='application/json')
-        self.assertEqual(pay_resp.status_code, 200)
-        self.assertTrue(pay_resp.json()['success'])
-
-        # 3. Check order updated to paid
         order = Order.objects.get(order_reference=order_ref)
+        self.assertEqual(order.status, 'pending_payment')
+        self.assertEqual(order.payment_gateway, 'manual_transfer')
+
+        # 2. Submit manual payment details
+        submit_url = f'/api/orders/{order_ref}/submit-payment/'
+        submit_resp = self.client.post(submit_url, {
+            'transaction_id': 'TXN99887766',
+            'sender_name': 'Ali Khan',
+            'sender_phone': '03001234567',
+            'receiving_account': 'Meezan Bank - 0101010101',
+            'amount': '100.00',
+            'customer_note': 'Transferred via Meezan App'
+        }, content_type='application/json')
+        self.assertEqual(submit_resp.status_code, 200)
+        self.assertTrue(submit_resp.json()['success'])
+
+        order.refresh_from_db()
+        self.assertEqual(order.status, 'pending_verification')
+        self.assertEqual(order.transaction_id, 'TXN99887766')
+        self.assertEqual(order.sender_name, 'Ali Khan')
+        self.assertEqual(order.sender_phone, '03001234567')
+
+        # Verify purchase is NOT granted yet before admin approval
+        self.assertFalse(Purchase.objects.filter(order=order).exists())
+
+        # 3. Admin approves payment
+        self.client.force_login(self.staff)
+        approve_resp = self.client.post(f'/api/admin/orders/{order.id}/approve/')
+        self.assertEqual(approve_resp.status_code, 200)
+        self.assertTrue(approve_resp.json()['success'])
+
+        order.refresh_from_db()
         self.assertEqual(order.status, 'paid')
         self.assertIsNotNone(order.paid_at)
 
-        # 4. Check purchase record created
+        # 4. Check purchase is active
         purchase = Purchase.objects.get(order=order)
         self.assertEqual(purchase.student, self.student)
         self.assertEqual(purchase.resource, self.resource)
         self.assertTrue(purchase.is_active)
 
-    def test_payment_callback_idempotency(self):
-        # Create order
+    def test_manual_payment_validation_errors(self):
         order = Order.objects.create(
-            order_reference='TEST-IDEM-001',
+            order_reference='ORD-VAL-001',
             student=self.student,
             resource=self.resource,
             amount=Decimal('100.00'),
-            payment_gateway='sandbox',
-            status='pending'
+            payment_gateway='manual_transfer',
+            status='pending_payment'
+        )
+        submit_url = f'/api/orders/{order.order_reference}/submit-payment/'
+
+        # Short invalid TID (less than 4 chars) fails with 400
+        short_resp = self.client.post(submit_url, {
+            'transaction_id': 'AB',
+            'sender_name': 'Ali Khan',
+            'sender_phone': '03001234567',
+            'receiving_account': 'JazzCash'
+        }, content_type='application/json')
+        self.assertEqual(short_resp.status_code, 400)
+        self.assertIn('Transaction ID', short_resp.json()['error'])
+
+        # Missing phone
+        resp = self.client.post(submit_url, {
+            'transaction_id': 'TX1234',
+            'sender_name': 'Ali Khan',
+            'receiving_account': 'JazzCash'
+        }, content_type='application/json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('mobile number is required', resp.json()['error'])
+
+        # Amount mismatch
+        resp = self.client.post(submit_url, {
+            'transaction_id': 'TX1234',
+            'sender_name': 'Ali Khan',
+            'sender_phone': '03001234567',
+            'receiving_account': 'JazzCash',
+            'amount': '50.00'
+        }, content_type='application/json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('does not match', resp.json()['error'])
+
+        # TID is optional: submission without TID succeeds
+        opt_order = Order.objects.create(
+            order_reference='ORD-OPT-TID-001',
+            student=self.student,
+            resource=self.resource,
+            amount=Decimal('100.00'),
+            payment_gateway='manual_transfer',
+            status='pending_payment'
+        )
+        opt_resp = self.client.post(f'/api/orders/{opt_order.order_reference}/submit-payment/', {
+            'sender_name': 'Ali Khan',
+            'sender_phone': '03001234567',
+            'receiving_account': 'JazzCash'
+        }, content_type='application/json')
+        self.assertEqual(opt_resp.status_code, 200)
+        self.assertTrue(opt_resp.json()['success'])
+
+    def test_admin_reject_payment_workflow(self):
+        order = Order.objects.create(
+            order_reference='ORD-REJ-001',
+            student=self.student,
+            resource=self.resource,
+            amount=Decimal('100.00'),
+            payment_gateway='manual_transfer',
+            status='pending_verification',
+            transaction_id='FAKE-TID-999'
         )
 
-        # Call sandbox payment twice
-        self.client.post('/api/payments/sandbox-pay/', {
-            'order_reference': 'TEST-IDEM-001'
+        self.client.force_login(self.staff)
+        reject_resp = self.client.post(f'/api/admin/orders/{order.id}/reject/', {
+            'reason': 'Payment not received in bank statement'
         }, content_type='application/json')
+        self.assertEqual(reject_resp.status_code, 200)
 
-        self.client.post('/api/payments/sandbox-pay/', {
-            'order_reference': 'TEST-IDEM-001'
-        }, content_type='application/json')
-
-        # Must have exactly 1 purchase record, not 2
-        self.assertEqual(Purchase.objects.filter(order=order).count(), 1)
+        order.refresh_from_db()
+        self.assertEqual(order.status, 'rejected')
+        self.assertEqual(order.rejection_reason, 'Payment not received in bank statement')
+        self.assertFalse(Purchase.objects.filter(order=order).exists())
 
 
 class SecurePaidPdfDownloadTests(TestCase):
@@ -739,8 +827,10 @@ class SecurePaidPdfDownloadTests(TestCase):
         self.assertEqual(resp['Content-Type'], 'application/pdf')
 
     def test_public_stream_remains_available_unauthenticated(self):
-        # Online reading in browser does not require authentication or purchase
-        resp = self.client.get(self.stream_url)
+        # Online reading in browser does not require authentication or purchase, fetches authorized stream token
+        detail_resp = self.client.get(f"/api/resources/class-9/physics/{self.resource.slug}/")
+        stream_url = detail_resp.json()['pdf_stream_url']
+        resp = self.client.get(stream_url)
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp['Content-Type'], 'application/pdf')
         self.assertIn('inline', resp['Content-Disposition'])
@@ -1205,7 +1295,9 @@ class DirectTransferAndOrderApprovalTests(TestCase):
         cb_resp = self.client.post('/api/payments/callback/direct_transfer/', {
             'order_reference': order_ref,
             'transaction_id': 'TXN987654321',
+            'sender_name': 'DT Student',
             'sender_phone': '03001234567',
+            'receiving_account': 'Meezan Bank - 0101010101',
         }, content_type='application/json')
         self.assertEqual(cb_resp.status_code, 200)
         self.assertEqual(cb_resp.json()['status'], 'pending_verification')
