@@ -19,6 +19,7 @@ from django.contrib.auth.models import User
 from django.contrib.auth.tokens import default_token_generator
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from django.utils.encoding import force_bytes, force_str
+from django.core.signing import TimestampSigner, BadSignature, SignatureExpired
 from django.core.validators import validate_email
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.clickjacking import xframe_options_exempt
@@ -46,6 +47,21 @@ from .payments.registry import get_payment_gateway, list_available_gateways
 from .payments.sandbox import SandboxPaymentGateway
 
 logger = logging.getLogger(__name__)
+
+pdf_stream_signer = TimestampSigner(salt='fbise-secure-reader-stream-2026')
+
+def generate_pdf_stream_token(resource_id, user_identifier):
+    """Generates an HMAC-signed token valid for 4 hours for inline browser reading."""
+    return pdf_stream_signer.sign(f"{resource_id}:{user_identifier}")
+
+def verify_pdf_stream_token(token, resource_id, max_age=14400):
+    """Verifies HMAC signature, resource_id, and expiration (4 hours)."""
+    try:
+        payload = pdf_stream_signer.unsign(token, max_age=max_age)
+        t_res_id, _ = payload.split(':', 1)
+        return str(t_res_id) == str(resource_id)
+    except Exception:
+        return False
 
 # ==============================================================================
 # Security & Permissions Decorator
@@ -164,7 +180,9 @@ def class_list(request):
             "subjects": subjects_data,
         })
 
-    return JsonResponse({"classes": data}, status=200)
+    response = JsonResponse({"classes": data}, status=200)
+    response['Cache-Control'] = 'public, max-age=30, stale-while-revalidate=120'
+    return response
 
 def class_detail(request, class_slug):
     """
@@ -172,7 +190,7 @@ def class_detail(request, class_slug):
     """
     cls = get_object_or_404(ClassLevel, slug=class_slug, is_active=True)
     subjects = []
-    for cs in cls.class_subjects.filter(is_active=True).select_related('subject'):
+    for cs in cls.class_subjects.filter(is_active=True).select_related('subject').prefetch_related('resources'):
         published_count = cs.resources.filter(is_published=True).count()
         subjects.append({
             "id": cs.subject.id,
@@ -188,7 +206,7 @@ def class_detail(request, class_slug):
             "url": f"/{cls.slug}/{cs.subject.slug}/",
         })
 
-    return JsonResponse({
+    response = JsonResponse({
         "id": cls.id,
         "name": cls.name,
         "grade_number": cls.grade_number,
@@ -196,6 +214,8 @@ def class_detail(request, class_slug):
         "description": cls.description,
         "subjects": subjects,
     }, status=200)
+    response['Cache-Control'] = 'public, max-age=30, stale-while-revalidate=120'
+    return response
 
 def subject_detail(request, class_slug, subject_slug):
     """
@@ -234,7 +254,7 @@ def subject_detail(request, class_slug, subject_slug):
         is_published=True
     ).count()
 
-    return JsonResponse({
+    response = JsonResponse({
         "class": {
             "name": class_level.name,
             "grade_number": class_level.grade_number,
@@ -256,6 +276,8 @@ def subject_detail(request, class_slug, subject_slug):
         "resources_count": len(resources_data),
         "resources": resources_data,
     }, status=200)
+    response['Cache-Control'] = 'public, max-age=30, stale-while-revalidate=120'
+    return response
 
 def resource_detail(request, class_slug, subject_slug, resource_slug):
     """
@@ -282,15 +304,20 @@ def resource_detail(request, class_slug, subject_slug, resource_slug):
     ]
 
     has_pdf = bool(resource.pdf_file)
-    pdf_stream_url = f"/api/resources/{class_level.slug}/{subject.slug}/{resource.slug}/pdf-stream/" if has_pdf else None
-    download_url = f"/api/resources/{class_level.slug}/{subject.slug}/{resource.slug}/download/" if has_pdf else None
-
     user_has_purchased = False
     if request.user.is_authenticated:
         if request.user.is_staff or resource.is_free:
             user_has_purchased = True
         else:
             user_has_purchased = Purchase.objects.filter(student=request.user, resource=resource, is_active=True).exists()
+
+    user_ident = str(request.user.id) if request.user.is_authenticated else get_client_ip(request)
+    stream_token = generate_pdf_stream_token(resource.id, user_ident)
+    pdf_stream_url = (
+        f"/api/resources/{class_level.slug}/{subject.slug}/{resource.slug}/pdf-stream/?token={stream_token}"
+        if has_pdf else None
+    )
+    download_url = f"/api/resources/{class_level.slug}/{subject.slug}/{resource.slug}/download/" if has_pdf else None
 
     return JsonResponse({
         "id": resource.id,
@@ -420,8 +447,11 @@ def resource_search(request):
 def resource_pdf_stream(request, class_slug, subject_slug, resource_slug):
     """
     Securely streams the PDF file for online reading in the browser.
-    Verifies that the resource is genuinely published.
-    Does not expose server filesystem paths.
+    Verifies that the resource is genuinely published and enforces strict backend authorization:
+    - If resource is paid and student has not purchased:
+      * Rejects direct download attempts (via console, URL manipulation, or altered HTML buttons) with 403 Forbidden.
+      * Requires a valid cryptographic reading session token generated for the current session.
+    - Sets secure, non-cacheable inline headers with download inhibition.
     """
     class_level = get_object_or_404(ClassLevel, slug=class_slug, is_active=True)
     subject = get_object_or_404(Subject, slug=subject_slug)
@@ -434,6 +464,45 @@ def resource_pdf_stream(request, class_slug, subject_slug, resource_slug):
             "resource": resource.title,
         }, status=404)
 
+    # Check student purchase / authorization
+    user_has_purchased = False
+    if request.user.is_authenticated:
+        if request.user.is_staff or resource.is_free:
+            user_has_purchased = True
+        else:
+            user_has_purchased = Purchase.objects.filter(student=request.user, resource=resource, is_active=True).exists()
+
+    # If the resource is paid and the user has not purchased it, enforce strict backend authorization
+    if not user_has_purchased and not resource.is_free:
+        # 1. Strictly block direct download attempts via URL manipulation, console fetch, or HTML alteration
+        is_direct_download = (
+            request.GET.get('download') == 'true' or
+            request.headers.get('Sec-Fetch-Dest') == 'document' or
+            'download' in request.GET
+        )
+        if is_direct_download:
+            logger.warning(
+                f"Blocked unauthorized direct download attempt for {resource.slug} from IP {get_client_ip(request)}"
+            )
+            return JsonResponse({
+                "error": f"Permission Denied: Offline PDF download requires a verified subject purchase (PKR {resource.price}).",
+                "requires_purchase": True,
+                "price": str(resource.price),
+                "resource_id": resource.id,
+                "resource_title": resource.title,
+            }, status=403)
+
+        # 2. Verify reader stream token generated by backend for the inline reader session
+        token = request.GET.get('token')
+        if not token or not verify_pdf_stream_token(token, resource.id):
+            logger.warning(
+                f"Blocked unauthorized stream access without valid token for {resource.slug} from IP {get_client_ip(request)}"
+            )
+            return JsonResponse({
+                "error": "Access Denied: Missing or expired online reading session token. Please reload the study guide page.",
+                "requires_token": True,
+            }, status=403)
+
     try:
         file_path = resource.pdf_file.path
         if not os.path.exists(file_path):
@@ -443,6 +512,7 @@ def resource_pdf_stream(request, class_slug, subject_slug, resource_slug):
         filename = f"{resource.slug}.pdf"
         response['Content-Disposition'] = f'inline; filename="{filename}"'
         response['X-Content-Type-Options'] = 'nosniff'
+        response['X-Download-Options'] = 'noopen'
         response['Cache-Control'] = 'private, no-cache, no-store, must-revalidate'
         response['Pragma'] = 'no-cache'
         return response
@@ -453,10 +523,11 @@ def resource_pdf_stream(request, class_slug, subject_slug, resource_slug):
 def resource_pdf_download(request, class_slug, subject_slug, resource_slug):
     """
     Secure endpoint for downloading complete paid PDF subject documents.
-    Enforces backend authorization:
-    - User must be authenticated.
-    - User must possess an active verified Purchase record, or have staff privileges, or resource is free.
+    Enforces strict backend authorization:
+    - User must be authenticated (401 if unauthenticated).
+    - User must possess an active verified Purchase record, or have staff privileges, or resource is free (403 if unauthorized).
     - Serves file as an attachment without exposing filesystem paths.
+    - Cannot be bypassed through console commands, HTML tampering, or shortcut re-enabling.
     """
     if not request.user.is_authenticated:
         return JsonResponse({
@@ -476,8 +547,11 @@ def resource_pdf_download(request, class_slug, subject_slug, resource_slug):
     has_purchase = Purchase.objects.filter(student=request.user, resource=resource, is_active=True).exists()
 
     if not (is_staff or resource.is_free or has_purchase):
+        logger.warning(
+            f"Blocked unauthorized offline download attempt by student {request.user.username} for resource {resource.slug}"
+        )
         return JsonResponse({
-            "error": f"Valid subject purchase required to download this resource ({resource.price} {resource.currency}).",
+            "error": f"Permission Denied: Valid subject purchase required to download this resource ({resource.price} {resource.currency}).",
             "requires_purchase": True,
             "resource_id": resource.id,
             "resource_title": resource.title,

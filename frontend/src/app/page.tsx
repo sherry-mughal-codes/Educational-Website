@@ -2,8 +2,7 @@ import Link from 'next/link';
 import { getClasses, searchResources } from '@/lib/api';
 import SearchBar from '@/components/SearchBar';
 
-export const dynamic = 'force-dynamic';
-export const revalidate = 0;
+export const revalidate = 30;
 
 export default async function HomePage() {
   const [classes, recentData] = await Promise.all([

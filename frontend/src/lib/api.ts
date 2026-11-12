@@ -139,14 +139,14 @@ export async function fetchApi<T>(endpoint: string, options: RequestInit = {}): 
 // ==============================================================================
 export async function getClasses(): Promise<ClassItem[]> {
   const data = await fetchApi<{ classes: ClassItem[] }>('/api/classes/', {
-    cache: 'no-store',
+    next: { revalidate: 30 },
   });
   return data?.classes || [];
 }
 
 export async function getClass(classSlug: string): Promise<ClassItem | null> {
   return await fetchApi<ClassItem>(`/api/classes/${classSlug}/`, {
-    cache: 'no-store',
+    next: { revalidate: 30 },
   });
 }
 
@@ -159,13 +159,13 @@ export async function getSubject(classSlug: string, subjectSlug: string) {
     practice_topics_count?: number;
     resources: ResourceItem[];
   }>(`/api/classes/${classSlug}/${subjectSlug}/`, {
-    cache: 'no-store',
+    next: { revalidate: 30 },
   });
 }
 
 export async function getResource(classSlug: string, subjectSlug: string, resourceSlug: string): Promise<ResourceItem | null> {
   return await fetchApi<ResourceItem>(`/api/resources/${classSlug}/${subjectSlug}/${resourceSlug}/`, {
-    cache: 'no-store',
+    next: { revalidate: 15 },
   });
 }
 

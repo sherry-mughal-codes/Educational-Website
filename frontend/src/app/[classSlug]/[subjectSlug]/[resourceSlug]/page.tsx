@@ -13,8 +13,7 @@ interface PageProps {
   };
 }
 
-export const dynamic = 'force-dynamic';
-export const revalidate = 0;
+export const revalidate = 15;
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const resource = await getResource(params.classSlug, params.subjectSlug, params.resourceSlug);

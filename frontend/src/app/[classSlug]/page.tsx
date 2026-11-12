@@ -10,8 +10,7 @@ interface PageProps {
   };
 }
 
-export const dynamic = 'force-dynamic';
-export const revalidate = 0;
+export const revalidate = 30;
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const cls = await getClass(params.classSlug);

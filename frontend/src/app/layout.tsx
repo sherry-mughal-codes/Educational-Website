@@ -1,8 +1,10 @@
+import { Suspense } from 'react';
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import Analytics from '@/components/Analytics';
 import Navigation from '@/components/Navigation';
 import Footer from '@/components/Footer';
+import NavigationProgressBar from '@/components/NavigationProgressBar';
 
 export const viewport: Viewport = {
   width: 'device-width',
@@ -66,6 +68,9 @@ export default function RootLayout({
         <link rel="icon" href="/favicon.ico" sizes="any" />
       </head>
       <body>
+        <Suspense fallback={null}>
+          <NavigationProgressBar />
+        </Suspense>
         <Analytics />
         <Navigation />
         <main className="main-content">{children}</main>
