@@ -66,13 +66,29 @@ export default function Navigation() {
           {student ? (
             <div className="nav-student-group">
               {student.is_staff ? (
-                <Link
-                  href="/admin/profile/"
-                  className={`nav-link nav-link-highlight ${pathname.startsWith('/admin/profile') ? 'active' : ''}`}
-                  title="View administrator profile and personal details"
-                >
-                  Profile 👤
-                </Link>
+                <>
+                  <Link
+                    href="/admin/resources/"
+                    className={`nav-link ${pathname.startsWith('/admin/resources') || pathname.startsWith('/admin/structure') || pathname.startsWith('/admin/pages') || pathname.startsWith('/admin/practice') ? 'active' : ''}`}
+                    title="Administrative Resource Management Console"
+                  >
+                    Admin Console ⚙️
+                  </Link>
+                  <Link
+                    href="/admin/orders/"
+                    className={`nav-link ${pathname.startsWith('/admin/orders') ? 'active' : ''}`}
+                    title="Review and verify student payment orders"
+                  >
+                    Verify Orders 💰
+                  </Link>
+                  <Link
+                    href="/admin/profile/"
+                    className={`nav-link nav-link-highlight ${pathname.startsWith('/admin/profile') ? 'active' : ''}`}
+                    title="View administrator profile and personal details"
+                  >
+                    Profile 👤
+                  </Link>
+                </>
               ) : (
                 <Link
                   href="/student/dashboard/"
@@ -94,9 +110,9 @@ export default function Navigation() {
           ) : (
             <div className="nav-auth-group">
               <Link
-                href="/student/login/"
-                className={`nav-link ${pathname === '/student/login/' ? 'active' : ''}`}
-                title="Sign in to your student account"
+                href="/login/"
+                className={`nav-link ${pathname === '/login/' ? 'active' : ''}`}
+                title="Sign in to your account"
               >
                 Sign In
               </Link>
@@ -149,13 +165,29 @@ export default function Navigation() {
             {student ? (
               <>
                 {student.is_staff ? (
-                  <Link
-                    href="/admin/profile/"
-                    className="mobile-nav-link mobile-nav-highlight"
-                    onClick={() => setMobileMenuOpen(false)}
-                  >
-                    Profile 👤
-                  </Link>
+                  <>
+                    <Link
+                      href="/admin/resources/"
+                      className="mobile-nav-link"
+                      onClick={() => setMobileMenuOpen(false)}
+                    >
+                      Admin Console ⚙️
+                    </Link>
+                    <Link
+                      href="/admin/orders/"
+                      className="mobile-nav-link"
+                      onClick={() => setMobileMenuOpen(false)}
+                    >
+                      Verify Orders 💰
+                    </Link>
+                    <Link
+                      href="/admin/profile/"
+                      className="mobile-nav-link mobile-nav-highlight"
+                      onClick={() => setMobileMenuOpen(false)}
+                    >
+                      Profile 👤
+                    </Link>
+                  </>
                 ) : (
                   <Link
                     href="/student/dashboard/"
@@ -179,11 +211,11 @@ export default function Navigation() {
             ) : (
               <>
                 <Link
-                  href="/student/login/"
+                  href="/login/"
                   className="mobile-nav-link"
                   onClick={() => setMobileMenuOpen(false)}
                 >
-                  Student Sign In
+                  Sign In
                 </Link>
                 <Link
                   href="/student/register/"

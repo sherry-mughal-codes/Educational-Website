@@ -312,11 +312,24 @@ def resource_detail(request, class_slug, subject_slug, resource_slug):
 
     has_pdf = bool(resource.pdf_file)
     user_has_purchased = False
+    pending_order_info = None
     if request.user.is_authenticated:
         if request.user.is_staff or resource.is_free:
             user_has_purchased = True
         else:
             user_has_purchased = Purchase.objects.filter(student=request.user, resource=resource, is_active=True).exists()
+            if not user_has_purchased:
+                pending_order = Order.objects.filter(
+                    student=request.user,
+                    resource=resource,
+                    status__in=['pending_verification', 'pending_payment']
+                ).order_by('-created_at').first()
+                if pending_order:
+                    pending_order_info = {
+                        "order_reference": pending_order.order_reference,
+                        "status": pending_order.status,
+                        "created_at": pending_order.created_at.isoformat(),
+                    }
 
     user_ident = str(request.user.id) if request.user.is_authenticated else get_client_ip(request)
     stream_token = generate_pdf_stream_token(resource.id, user_ident)
@@ -344,6 +357,7 @@ def resource_detail(request, class_slug, subject_slug, resource_slug):
         "currency": resource.currency,
         "is_free": resource.is_free,
         "user_has_purchased": user_has_purchased,
+        "pending_order": pending_order_info,
         "author_attribution": resource.author_attribution,
         "meta_title": resource.get_meta_title(),
         "meta_description": resource.get_meta_description(),
@@ -588,6 +602,8 @@ def sitemap_data(request):
     """
     urls = [
         {"path": "/", "priority": "1.0", "changefreq": "daily"},
+        {"path": "/login/", "priority": "0.6", "changefreq": "monthly"},
+        {"path": "/practice/", "priority": "0.8", "changefreq": "weekly"},
         {"path": "/about/", "priority": "0.7", "changefreq": "monthly"},
         {"path": "/contact/", "priority": "0.7", "changefreq": "monthly"},
         {"path": "/privacy-policy/", "priority": "0.5", "changefreq": "monthly"},
@@ -806,8 +822,10 @@ def student_resend_verification(request):
 @csrf_exempt
 def student_login(request):
     """
-    Student login endpoint. Validates credentials, protects against brute-force attacks
-    via cache-backed IP/account rate limiting, and initializes secure session.
+    Unified login endpoint for both students and administrators.
+    Validates credentials (email or username), protects against brute-force attacks
+    via cache-backed IP/account rate limiting, initializes secure session,
+    and returns role information and recommended destination URL.
     """
     if request.method != 'POST':
         return JsonResponse({"error": "Method not allowed"}, status=405)
@@ -817,14 +835,14 @@ def student_login(request):
     except Exception:
         data = request.POST
 
-    email = data.get('email', '').strip().lower()
+    identifier = (data.get('email') or data.get('username') or '').strip()
     password = data.get('password', '')
 
-    if not email or not password:
-        return JsonResponse({"error": "Email and password are required."}, status=400)
+    if not identifier or not password:
+        return JsonResponse({"error": "Email or username and password are required."}, status=400)
 
     ip = get_client_ip(request)
-    rate_key = f"login_fails_{ip}_{email}"
+    rate_key = f"login_fails_{ip}_{identifier.lower()}"
     is_limited, remaining = check_rate_limit(rate_key, max_attempts=5, timeout_seconds=900)
     if is_limited:
         return JsonResponse({
@@ -832,15 +850,25 @@ def student_login(request):
         }, status=429)
 
     user = None
-    candidate_user = User.objects.filter(email__iexact=email).first()
-    if candidate_user:
-        user = authenticate(request, username=candidate_user.username, password=password)
+    # 1. Direct authenticate with exact identifier (e.g. username like admin-jamil)
+    user = authenticate(request, username=identifier, password=password)
+    # 2. Check if identifier matches an email case-insensitively
     if not user:
-        user = authenticate(request, username=email, password=password)
+        candidate_user = User.objects.filter(email__iexact=identifier).first()
+        if candidate_user:
+            user = authenticate(request, username=candidate_user.username, password=password)
+    # 3. Check case-insensitive username match
+    if not user:
+        candidate_username = User.objects.filter(username__iexact=identifier).first()
+        if candidate_username:
+            user = authenticate(request, username=candidate_username.username, password=password)
+    # 4. Fallback to lowercase
+    if not user:
+        user = authenticate(request, username=identifier.lower(), password=password)
 
     if user is None:
         record_failed_attempt(rate_key, timeout_seconds=900)
-        return JsonResponse({"error": "Invalid email address or password."}, status=401)
+        return JsonResponse({"error": "Invalid email/username or password."}, status=401)
 
     if not user.is_active:
         return JsonResponse({"error": "This account is inactive. Please contact support."}, status=403)
@@ -850,15 +878,20 @@ def student_login(request):
 
     profile = getattr(user, 'student_profile', None)
     purchases_count = user.purchases.filter(is_active=True).count()
+    is_admin = bool(user.is_staff or user.is_superuser)
 
     return JsonResponse({
         "success": True,
+        "role": "admin" if is_admin else "student",
+        "redirect_url": "/admin/resources/" if is_admin else "/student/dashboard/",
         "user": {
             "id": user.id,
             "email": user.email,
-            "full_name": user.first_name or user.username,
+            "username": user.username,
+            "full_name": user.get_full_name() or user.username,
             "is_staff": user.is_staff,
-            "is_email_verified": profile.is_email_verified if profile else False,
+            "is_superuser": user.is_superuser,
+            "is_email_verified": profile.is_email_verified if profile else True,
             "purchases_count": purchases_count,
         }
     }, status=200)
@@ -866,31 +899,34 @@ def student_login(request):
 
 @csrf_exempt
 def student_logout(request):
-    """Signs out student from active session."""
+    """Signs out student or staff member from active session."""
     logout(request)
     return JsonResponse({"success": True, "message": "Signed out successfully."}, status=200)
 
 
 def student_me(request):
-    """Returns current student authentication state and profile summary."""
+    """Returns current student or staff authentication state and profile summary."""
     if not request.user.is_authenticated:
         return JsonResponse({"authenticated": False, "user": None}, status=200)
 
     user = request.user
     profile = getattr(user, 'student_profile', None)
     purchases_count = user.purchases.filter(is_active=True).count()
+    is_admin = bool(user.is_staff or user.is_superuser)
 
     return JsonResponse({
         "authenticated": True,
+        "role": "admin" if is_admin else "student",
         "user": {
             "id": user.id,
             "email": user.email,
-            "full_name": user.first_name or user.username,
+            "username": user.username,
+            "full_name": user.get_full_name() or user.first_name or user.username,
             "is_staff": user.is_staff,
             "is_superuser": user.is_superuser,
             "is_email_verified": profile.is_email_verified if profile else True,
             "purchases_count": purchases_count,
-            "date_joined": user.date_joined.isoformat(),
+            "date_joined": user.date_joined.isoformat() if user.date_joined else None,
         }
     }, status=200)
 
@@ -1150,23 +1186,50 @@ def order_create(request):
             "dashboard_url": "/student/dashboard/",
         }, status=200)
 
-    date_prefix = timezone.now().strftime('%Y%m%d')
-    unique_ref = f"ORD-{date_prefix}-{uuid.uuid4().hex[:8].upper()}"
-
-    locked_amount = resource.price
-    currency = resource.currency
-    customer_note = str(data.get('customer_note') or data.get('note') or data.get('notes') or '').strip()
-
-    order = Order.objects.create(
-        order_reference=unique_ref,
+    # Check if student already has a pending verification order for this resource
+    pending_verif = Order.objects.filter(
         student=request.user,
         resource=resource,
-        amount=locked_amount,
-        currency=currency,
-        payment_gateway='manual_transfer',
-        status='pending_payment',
-        customer_note=customer_note,
-    )
+        status='pending_verification'
+    ).order_by('-created_at').first()
+
+    if pending_verif:
+        return JsonResponse({
+            "success": False,
+            "already_pending_verification": True,
+            "order_reference": pending_verif.order_reference,
+            "error": f"You already have an order for this study guide awaiting payment verification (Order #{pending_verif.order_reference}). An administrator is currently reviewing your payment. You cannot apply again until verification is complete.",
+            "dashboard_url": "/student/dashboard/",
+            "status": "pending_verification",
+        }, status=400)
+
+    # Reuse existing pending_payment order for this student and resource if one exists
+    existing_pending_order = Order.objects.filter(
+        student=request.user,
+        resource=resource,
+        status='pending_payment'
+    ).order_by('-created_at').first()
+
+    if existing_pending_order:
+        order = existing_pending_order
+    else:
+        date_prefix = timezone.now().strftime('%Y%m%d')
+        unique_ref = f"ORD-{date_prefix}-{uuid.uuid4().hex[:8].upper()}"
+
+        locked_amount = resource.price
+        currency = resource.currency
+        customer_note = str(data.get('customer_note') or data.get('note') or data.get('notes') or '').strip()
+
+        order = Order.objects.create(
+            order_reference=unique_ref,
+            student=request.user,
+            resource=resource,
+            amount=locked_amount,
+            currency=currency,
+            payment_gateway='manual_transfer',
+            status='pending_payment',
+            customer_note=customer_note,
+        )
 
     active_accounts = get_active_payment_accounts()
     instructions = get_payment_instructions()
@@ -1337,13 +1400,22 @@ def admin_login(request):
     except Exception:
         data = request.POST
 
-    username = data.get('username', '').strip()
+    username = (data.get('username') or data.get('email') or '').strip()
     password = data.get('password', '')
 
     if not username or not password:
         return JsonResponse({"error": "Username and password are required."}, status=400)
 
     user = authenticate(request, username=username, password=password)
+    if not user:
+        candidate_user = User.objects.filter(email__iexact=username).first()
+        if candidate_user:
+            user = authenticate(request, username=candidate_user.username, password=password)
+    if not user:
+        candidate_user = User.objects.filter(username__iexact=username).first()
+        if candidate_user:
+            user = authenticate(request, username=candidate_user.username, password=password)
+
     if user is None:
         return JsonResponse({"error": "Invalid username or password."}, status=401)
 

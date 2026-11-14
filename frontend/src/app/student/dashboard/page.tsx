@@ -25,11 +25,11 @@ export default function StudentDashboardPage() {
     ])
       .then(([dashRes, progRes]) => {
         if (!dashRes) {
-          router.replace('/student/login/?returnUrl=/student/dashboard/');
+          router.replace('/login/?returnUrl=/student/dashboard/');
           return;
         }
         if (dashRes.student?.is_staff) {
-          router.replace('/admin/profile/');
+          router.replace('/admin/resources/');
           return;
         }
         setData(dashRes);

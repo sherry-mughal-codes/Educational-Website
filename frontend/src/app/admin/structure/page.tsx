@@ -125,11 +125,11 @@ export default function AdminStructurePage() {
     adminGetMe()
       .then((data) => {
         if (!data || !data.authenticated || !data.user?.is_staff) {
-          router.replace('/admin/login/');
+          router.replace('/login/?returnUrl=/admin/structure/&error=admin_required');
         }
       })
       .catch(() => {
-        router.replace('/admin/login/');
+        router.replace('/login/?returnUrl=/admin/structure/&error=admin_required');
       });
   }, [router]);
 

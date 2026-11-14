@@ -27,7 +27,7 @@ export default function AdminProfilePage() {
     adminGetMe()
       .then((res) => {
         if (!res.authenticated || !res.user) {
-          router.replace('/admin/login/?returnUrl=/admin/profile/');
+          router.replace('/login/?returnUrl=/admin/profile/&error=admin_required');
           return;
         }
         setAdmin(res.user);
@@ -36,7 +36,7 @@ export default function AdminProfilePage() {
         setUsername(res.user.username || '');
       })
       .catch(() => {
-        router.replace('/admin/login/?returnUrl=/admin/profile/');
+        router.replace('/login/?returnUrl=/admin/profile/&error=admin_required');
       })
       .finally(() => setIsLoading(false));
   }, [router]);
@@ -47,7 +47,7 @@ export default function AdminProfilePage() {
     } catch {
       // ignore
     }
-    router.push('/admin/login/');
+    router.push('/login/');
   };
 
   const handleSaveProfile = async (e: React.FormEvent) => {

@@ -53,11 +53,11 @@ export default function NewResourcePage() {
     adminGetMe()
       .then((data) => {
         if (!data || !data.authenticated || !data.user?.is_staff) {
-          router.replace('/admin/login/');
+          router.replace('/login/?returnUrl=/admin/resources/new/&error=admin_required');
         }
       })
       .catch(() => {
-        router.replace('/admin/login/');
+        router.replace('/login/?returnUrl=/admin/resources/new/&error=admin_required');
       });
   }, [router]);
 

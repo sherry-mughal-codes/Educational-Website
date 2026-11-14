@@ -38,6 +38,7 @@ export default function CheckoutPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [requiresVerification, setRequiresVerification] = useState(false);
   const [alreadyOwned, setAlreadyOwned] = useState(false);
+  const [pendingVerificationOrder, setPendingVerificationOrder] = useState<string | null>(null);
 
   useEffect(() => {
     // 1. Check student auth
@@ -78,6 +79,8 @@ export default function CheckoutPage() {
           setResource(resData);
           if (resData.user_has_purchased) {
             setAlreadyOwned(true);
+          } else if (resData.pending_order?.status === 'pending_verification') {
+            setPendingVerificationOrder(resData.pending_order.order_reference);
           }
           setErrorMessage(null);
           return;
@@ -181,6 +184,13 @@ export default function CheckoutPage() {
         return;
       }
 
+      if (orderRes.already_pending_verification) {
+        setPendingVerificationOrder(orderRes.order_reference || 'Existing Order');
+        setIsSubmitting(false);
+        setProcessingStep(null);
+        return;
+      }
+
       if (orderRes.requires_email_verification) {
         setRequiresVerification(true);
         setErrorMessage(orderRes.error || 'Email verification is required before placing orders.');
@@ -272,7 +282,37 @@ export default function CheckoutPage() {
     );
   }
 
-  // Determine active dynamic accounts and steps from admin settings
+  if (pendingVerificationOrder) {
+    return (
+      <div className="container checkout-wrapper" style={{ padding: '1.5rem 1rem', maxWidth: '640px', margin: '0 auto' }}>
+        <div className="checkout-already-card" style={{ padding: '2rem 1.5rem', textAlign: 'center', background: '#fffbeb', border: '1.5px solid #fde68a', borderRadius: '8px' }}>
+          <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem' }}>⏳</div>
+          <span style={{ display: 'inline-block', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', color: '#92400e', background: '#fef3c7', padding: '0.2rem 0.6rem', borderRadius: '4px', marginBottom: '0.5rem' }}>
+            Verification In Progress
+          </span>
+          <h1 style={{ fontSize: '1.25rem', fontWeight: 800, margin: '0 0 0.5rem 0', color: '#78350f' }}>
+            Payment Under Review
+          </h1>
+          <p style={{ fontSize: '0.9rem', color: '#92400e', margin: '0 0 1rem 0', lineHeight: 1.5 }}>
+            You have already submitted a payment verification request for <strong>{resource?.title || 'this study guide'}</strong>.
+            <br />
+            <strong>Order Reference:</strong> <code style={{ background: '#ffffff', padding: '0.15rem 0.4rem', borderRadius: '4px', border: '1px solid #fde68a' }}>{pendingVerificationOrder}</code>
+          </p>
+          <p style={{ fontSize: '0.85rem', color: '#78350f', margin: '0 0 1.5rem 0', lineHeight: 1.5 }}>
+            An administrator is currently reviewing the transaction. You cannot apply again for this same resource while verification is pending. Once approved, the complete notes and offline PDF download will unlock automatically.
+          </p>
+          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+            <Link href="/student/dashboard/" className="btn-primary" style={{ padding: '0.5rem 1.25rem', fontSize: '0.875rem' }}>
+              View Status in Dashboard →
+            </Link>
+            <Link href="/search/" className="btn-outline-sm" style={{ padding: '0.5rem 1.25rem', fontSize: '0.875rem' }}>
+              Browse Other Study Notes
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
   const allAccounts: PaymentAccountItem[] = paymentSettings?.accounts?.filter((a) => a.is_active !== false) || [
     {
       id: 'default-1',

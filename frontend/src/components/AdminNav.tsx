@@ -14,7 +14,7 @@ export default function AdminNav() {
     } catch {
       // ignore
     }
-    router.push('/admin/login/');
+    router.push('/login/');
   };
 
   return (

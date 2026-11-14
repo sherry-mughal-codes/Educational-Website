@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { getResource } from '@/lib/api';
 import Breadcrumbs from '@/components/Breadcrumbs';
 import PdfViewer from '@/components/PdfViewer';
+import ResourceActionStrip from '@/components/ResourceActionStrip';
 
 interface PageProps {
   params: {
@@ -124,55 +125,10 @@ export default async function ResourceDetailPage({ params }: PageProps) {
           </header>
 
           {/* Sleek, Compact Purchase & Download Action Strip */}
-          <div className="resource-purchase-strip" style={{
-            background: '#ffffff',
-            border: '1.5px solid #10b981',
-            borderRadius: '8px',
-            padding: '0.55rem 0.85rem',
-            marginBottom: '0.75rem',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '0.75rem',
-            flexWrap: 'wrap',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-              <span style={{ fontSize: '0.68rem', fontWeight: 800, textTransform: 'uppercase', color: '#047857', background: '#ecfdf5', border: '1px solid #a7f3d0', padding: '0.15rem 0.45rem', borderRadius: '4px' }}>
-                Offline PDF
-              </span>
-              <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#0f172a' }}>
-                Complete FBISE Solved Guide:
-              </span>
-              <span style={{ fontSize: '0.9rem', fontWeight: 900, color: '#047857', background: '#f0fdf4', padding: '0.15rem 0.45rem', borderRadius: '4px' }}>
-                PKR {resource.price ? Number(resource.price).toLocaleString('en-PK') : '300'}
-              </span>
-            </div>
-
-            <div>
-              {resource.user_has_purchased && resource.download_url ? (
-                <a
-                  href={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${resource.download_url}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="btn-primary-sm"
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', background: '#047857', color: '#ffffff', padding: '0.4rem 0.85rem', fontSize: '0.8rem', fontWeight: 700, textDecoration: 'none', borderRadius: '6px' }}
-                  title="Download verified PDF"
-                >
-                  📥 Download PDF ↓
-                </a>
-              ) : (
-                <Link
-                  href={`/checkout/${resource.slug}/`}
-                  className="btn-primary-sm"
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', background: '#047857', color: '#ffffff', padding: '0.4rem 0.95rem', fontSize: '0.8rem', fontWeight: 700, textDecoration: 'none', borderRadius: '6px' }}
-                  title="Purchase complete subject PDF"
-                >
-                  📥 Download Offline PDF (PKR {resource.price ? Number(resource.price).toLocaleString('en-PK') : ''}) →
-                </Link>
-              )}
-            </div>
-          </div>
+          <ResourceActionStrip
+            initialResource={resource}
+            priceFormatted={resource.price ? Number(resource.price).toLocaleString('en-PK') : '300'}
+          />
 
           {/* Online PDF Reader Section with Strict Payment-Gated Download */}
           <PdfViewer
@@ -187,6 +143,7 @@ export default async function ResourceDetailPage({ params }: PageProps) {
             userHasPurchased={Boolean(resource.user_has_purchased)}
             downloadUrl={resource.download_url}
             price={resource.price}
+            pendingOrder={resource.pending_order}
           />
 
           {/* Educational Content & Syllabus Alignment Preview (Brief & Usable) */}

@@ -16,6 +16,11 @@ interface PdfViewerProps {
   userHasPurchased?: boolean;
   downloadUrl?: string | null;
   price?: string | number;
+  pendingOrder?: {
+    order_reference: string;
+    status: 'pending_verification' | 'pending_payment';
+    created_at: string;
+  } | null;
 }
 
 export default function PdfViewer({
@@ -30,13 +35,44 @@ export default function PdfViewer({
   userHasPurchased = false,
   downloadUrl,
   price = '100',
+  pendingOrder = null,
 }: PdfViewerProps) {
   // Start with reader open on screen so student can read immediately without leaving site
   const [isOpen, setIsOpen] = useState(true);
   const [isTheaterMode, setIsTheaterMode] = useState(false);
 
+  const [purchased, setPurchased] = useState(userHasPurchased);
+  const [liveDownloadUrl, setLiveDownloadUrl] = useState(downloadUrl);
+  const [livePendingOrder, setLivePendingOrder] = useState(pendingOrder);
+
   const inlineIframeRef = useRef<HTMLIFrameElement | null>(null);
   const theaterIframeRef = useRef<HTMLIFrameElement | null>(null);
+
+  useEffect(() => {
+    if (!resourceSlug) return;
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    fetch(`${apiUrl}/api/resources/by-slug/${encodeURIComponent(resourceSlug)}/`, {
+      credentials: 'include',
+      cache: 'no-store',
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data) {
+          if (data.user_has_purchased) {
+            setPurchased(true);
+            setLiveDownloadUrl(data.download_url);
+            setLivePendingOrder(null);
+          } else if (data.pending_order) {
+            setLivePendingOrder(data.pending_order);
+            setPurchased(false);
+          } else {
+            setLivePendingOrder(null);
+            setPurchased(false);
+          }
+        }
+      })
+      .catch(() => {});
+  }, [resourceSlug]);
 
   useEffect(() => {
     if (hasPdf && streamUrl) {
@@ -129,8 +165,9 @@ export default function PdfViewer({
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
   const fullStreamUrl = streamUrl.startsWith('http') ? streamUrl : `${apiUrl}${streamUrl}`;
   const secureStreamUrl = `${fullStreamUrl}#toolbar=0&navpanes=0&scrollbar=1`;
-  const fullDownloadUrl = downloadUrl
-    ? `${apiUrl}${downloadUrl}`
+  const effectiveDownloadUrl = liveDownloadUrl || downloadUrl;
+  const fullDownloadUrl = effectiveDownloadUrl
+    ? (effectiveDownloadUrl.startsWith('http') ? effectiveDownloadUrl : `${apiUrl}${effectiveDownloadUrl}`)
     : null;
 
   return (
@@ -188,7 +225,7 @@ export default function PdfViewer({
             )}
 
             {/* STRICT PAYMENT GATED DOWNLOAD BUTTON */}
-            {userHasPurchased && fullDownloadUrl ? (
+            {purchased && fullDownloadUrl ? (
               <a
                 href={fullDownloadUrl}
                 target="_blank"
@@ -210,6 +247,26 @@ export default function PdfViewer({
               >
                 📥 Download PDF ↓
               </a>
+            ) : livePendingOrder?.status === 'pending_verification' ? (
+              <Link
+                href="/student/dashboard/"
+                className="btn-outline-sm"
+                style={{
+                  fontSize: '0.8125rem',
+                  padding: '0.4rem 0.85rem',
+                  color: '#92400e',
+                  borderColor: '#d97706',
+                  background: '#fef3c7',
+                  fontWeight: 700,
+                  textDecoration: 'none',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                }}
+                title="Your payment is currently being verified by an administrator"
+              >
+                ⏳ Verification Pending (#{livePendingOrder.order_reference})
+              </Link>
             ) : resourceSlug ? (
               <Link
                 href={`/checkout/${resourceSlug}/`}
@@ -300,7 +357,7 @@ export default function PdfViewer({
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
               {/* STRICT PAYMENT GATED DOWNLOAD BUTTON IN FULLSCREEN */}
-              {userHasPurchased && fullDownloadUrl ? (
+              {purchased && fullDownloadUrl ? (
                 <a
                   href={fullDownloadUrl}
                   target="_blank"
@@ -318,6 +375,21 @@ export default function PdfViewer({
                 >
                   📥 Download PDF
                 </a>
+              ) : livePendingOrder?.status === 'pending_verification' ? (
+                <Link
+                  href="/student/dashboard/"
+                  style={{
+                    background: '#78350f',
+                    color: '#fef3c7',
+                    textDecoration: 'none',
+                    padding: '0.35rem 0.75rem',
+                    borderRadius: '6px',
+                    fontSize: '0.8125rem',
+                    fontWeight: 700,
+                  }}
+                >
+                  ⏳ Verification Pending
+                </Link>
               ) : resourceSlug ? (
                 <Link
                   href={`/checkout/${resourceSlug}/`}

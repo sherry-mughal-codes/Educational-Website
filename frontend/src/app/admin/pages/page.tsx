@@ -50,11 +50,11 @@ export default function AdminPagesContentPage() {
     adminGetMe()
       .then((data) => {
         if (!data || !data.authenticated || !data.user?.is_staff) {
-          router.replace('/admin/login/');
+          router.replace('/login/?returnUrl=/admin/pages/&error=admin_required');
         }
       })
       .catch(() => {
-        router.replace('/admin/login/');
+        router.replace('/login/?returnUrl=/admin/pages/&error=admin_required');
       });
 
     if (typeof window !== 'undefined') {

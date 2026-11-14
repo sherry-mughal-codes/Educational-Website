@@ -1,8 +1,10 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import AdminNav from '@/components/AdminNav';
 import {
+  adminGetMe,
   adminGetPracticeOverview,
   adminGetPracticeQuestions,
   adminCreatePracticeTopic,
@@ -15,6 +17,21 @@ import {
 } from '@/lib/api';
 
 export default function AdminPracticePage() {
+  const router = useRouter();
+
+  // Check auth
+  useEffect(() => {
+    adminGetMe()
+      .then((data) => {
+        if (!data || !data.authenticated || !data.user?.is_staff) {
+          router.replace('/login/?returnUrl=/admin/practice/&error=admin_required');
+        }
+      })
+      .catch(() => {
+        router.replace('/login/?returnUrl=/admin/practice/&error=admin_required');
+      });
+  }, [router]);
+
   const [loading, setLoading] = useState<boolean>(true);
   const [classesData, setClassesData] = useState<any[]>([]);
 

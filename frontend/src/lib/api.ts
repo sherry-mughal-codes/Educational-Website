@@ -59,6 +59,11 @@ export interface ResourceItem {
   currency?: string;
   is_free?: boolean;
   user_has_purchased?: boolean;
+  pending_order?: {
+    order_reference: string;
+    status: 'pending_verification' | 'pending_payment';
+    created_at: string;
+  } | null;
   is_published?: boolean;
   author_attribution?: string;
   meta_title?: string;
@@ -491,6 +496,7 @@ export interface StudentUser {
   full_name: string;
   is_staff?: boolean;
   is_superuser?: boolean;
+  role?: 'admin' | 'student';
   purchases_count?: number;
   date_joined?: string;
 }
@@ -582,20 +588,25 @@ export async function studentRegister(payload: {
 }
 
 export async function studentLogin(
-  email: string,
+  identifier: string,
   password: string
-): Promise<{ success: boolean; user?: StudentUser; error?: string }> {
+): Promise<{ success: boolean; user?: StudentUser; role?: 'admin' | 'student'; redirect_url?: string; error?: string }> {
   const res = await fetch(`${API_BASE}/api/auth/login/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email: identifier, username: identifier, password }),
     credentials: 'include',
   });
   const data = await res.json();
   if (!res.ok) {
     return { success: false, error: data.error || 'Login failed' };
   }
-  return { success: true, user: data.user };
+  return {
+    success: true,
+    user: data.user,
+    role: data.role || (data.user?.is_staff ? 'admin' : 'student'),
+    redirect_url: data.redirect_url,
+  };
 }
 
 export async function studentLogout(): Promise<boolean> {
@@ -786,6 +797,7 @@ export async function createOrder(payload: {
     action_url?: string;
   };
   error?: string;
+  already_pending_verification?: boolean;
   requires_email_verification?: boolean;
   email?: string;
 }> {
@@ -810,6 +822,8 @@ export async function createOrder(payload: {
       return {
         success: false,
         error: data.error || 'Failed to create order',
+        already_pending_verification: data.already_pending_verification,
+        order_reference: data.order_reference,
         requires_email_verification: data.requires_email_verification,
         email: data.email,
       };
